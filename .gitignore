@@ -11,6 +11,9 @@ sessions/
 goals.json
 trust.json
 models-store.json
+codex-accounts.json
+.codex-accounts.lock
+auth.json.codex-switch.bak
 
 # Generated/cache data.
 .pi/figma-cache/

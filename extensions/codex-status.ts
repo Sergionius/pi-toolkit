@@ -1,11 +1,8 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { readCurrentCodexCredential } from "./lib/codex-auth";
 
-const PI_HOME = process.env.PI_CODING_AGENT_DIR || process.env.PI_HOME || join(process.env.HOME || "", ".pi", "agent");
-const PI_AUTH_PATH = join(PI_HOME, "auth.json");
 const USAGE_URL = "https://chatgpt.com/backend-api/codex/usage";
 const RESET_CREDIT_CONSUME_URL = "https://chatgpt.com/backend-api/codex/rate-limit-reset-credits/consume";
 
@@ -45,29 +42,16 @@ type Usage = {
   rate_limit_reached_type?: string | null;
 };
 
-function readJson(path: string): any {
-  return JSON.parse(readFileSync(path, "utf8"));
-}
-
-function readPiCodexAuth() {
-  if (!existsSync(PI_AUTH_PATH)) throw new Error(`pi auth not found: ${PI_AUTH_PATH}`);
-
-  const auth = readJson(PI_AUTH_PATH);
-  const codexAuth = auth?.["openai-codex"];
-  const accessToken = codexAuth?.access;
-
-  if (!accessToken) {
-    throw new Error("pi OpenAI/Codex token not found. Run `/login` in pi and choose OpenAI/Codex.");
-  }
-
+async function readPiCodexAuth() {
+  const credential = await readCurrentCodexCredential();
   return {
-    accessToken: String(accessToken),
-    accountId: codexAuth?.accountId ? String(codexAuth.accountId) : undefined,
+    accessToken: credential.access,
+    accountId: credential.accountId,
   };
 }
 
 async function fetchUsage(): Promise<Usage> {
-  const auth = readPiCodexAuth();
+  const auth = await readPiCodexAuth();
 
   // Node's built-in fetch is currently Cloudflare-challenged by chatgpt.com for
   // this endpoint, while Python urllib matches the working Codex CLI behavior on
@@ -131,7 +115,7 @@ except urllib.error.HTTPError as error:
 }
 
 async function consumeResetCredit(redeemRequestId: string): Promise<void> {
-  const auth = readPiCodexAuth();
+  const auth = await readPiCodexAuth();
 
   const script = String.raw`
 import json, os, sys, urllib.request, urllib.error

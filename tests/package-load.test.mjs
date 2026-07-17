@@ -10,6 +10,7 @@ const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const jiti = createJiti(import.meta.url);
 const extensionFiles = [
   "extensions/agterm-status.ts",
+  "extensions/codex-accounts.ts",
   "extensions/codex-status.ts",
   "extensions/figma-context.ts",
   "extensions/flutter-refresh.ts",
@@ -46,7 +47,18 @@ test("all extension entry points load and register expected commands once", asyn
     await factory(pi.api);
   }
 
-  const expected = ["goal", "plan", "goal-plan", "codex-status", "pi-toolkit-doctor"];
+  const expected = [
+    "goal",
+    "plan",
+    "goal-plan",
+    "codex-status",
+    "codex-account-save",
+    "codex-account-list",
+    "codex-account-current",
+    "codex-account-switch",
+    "codex-account-remove",
+    "pi-toolkit-doctor",
+  ];
   for (const command of expected) {
     assert.equal(pi.commands.filter((name) => name === command).length, 1, `${command} must be registered once`);
   }

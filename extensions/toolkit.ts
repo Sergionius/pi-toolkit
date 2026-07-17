@@ -4,6 +4,7 @@ import { access, cp, mkdir, readFile, readdir, rename, rm } from "node:fs/promis
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { getCodexAccountsSummary } from "./lib/codex-auth";
 
 const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const HELPER_PATH = join(PACKAGE_ROOT, "scripts", "flutter_refresh.sh");
@@ -117,6 +118,17 @@ export async function getDoctorReport(): Promise<{ lines: string[]; healthy: boo
     const installedReady = await exists(join(installed, "package.json"));
     lines.push(`VS Code bridge installed: ${installedReady ? "OK" : "NOT SYNCED"} (${installed})`);
     healthy &&= installedReady;
+  }
+
+  try {
+    const accounts = await getCodexAccountsSummary();
+    const match = accounts.currentProfile
+      ? `current auth matches '${accounts.currentProfile}'`
+      : "current auth is untracked or logged out";
+    lines.push(`Codex profiles: ${accounts.count} (${match})`);
+  } catch (error) {
+    healthy = false;
+    lines.push(`Codex profiles: FAILED (${error instanceof Error ? error.message : String(error)})`);
   }
 
   lines.push(`FIGMA_TOKEN: ${process.env.FIGMA_TOKEN ? "set" : "not set (Figma tool unavailable)"}`);

@@ -9,6 +9,7 @@ Private personal [Pi](https://pi.dev) package containing reusable extensions, sk
 - `plan/` and `goal/` — conversational plan mode and autonomous goals.
 - `agterm-status.ts` — agterm active/completed status integration.
 - `codex-status.ts` — Codex usage and reset-credit commands.
+- `codex-accounts.ts` — local multi-account manager for OpenAI/Codex OAuth profiles.
 - `figma-context.ts` — `figma_get_screen_context` tool.
 - `flutter-refresh.ts` — automatic Flutter reload/restart after successful edits.
 - `notify-sound.ts` — completion sound without routine visual noise.
@@ -76,6 +77,47 @@ Features are enabled by environment variables; values are never stored in this r
 
 `config/settings.example.json` contains sanitized defaults. It is documentation only and is never copied over the active Pi settings automatically.
 
+## Multiple Codex accounts
+
+Pi stores one `openai-codex` credential at a time. The toolkit can keep multiple local profiles and atomically switch the active credential without putting tokens in Git.
+
+Initial setup:
+
+```text
+/codex-account-save primary
+/logout
+/login
+/codex-account-save secondary
+```
+
+Available commands:
+
+```text
+/codex-account-save <name>
+/codex-account-list
+/codex-account-current
+/codex-account-switch [name]
+/codex-account-remove <name>
+```
+
+`/codex-account-switch` first saves a refreshed active credential when its account ID still matches, backs up `auth.json`, replaces only the `openai-codex` entry, and exits Pi. Resume the same project/session with:
+
+```bash
+pi -c
+```
+
+Profiles are stored locally in `${PI_CODING_AGENT_DIR:-~/.pi/agent}/codex-accounts.json` with mode `0600`; the directory uses mode `0700`. `auth.json.codex-switch.bak` contains the most recent pre-switch auth state and is also mode `0600`. Neither file is part of this repository.
+
+Recovery after an interrupted or incorrect switch:
+
+```bash
+cp "${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/auth.json.codex-switch.bak" \
+   "${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/auth.json"
+chmod 600 "${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/auth.json"
+```
+
+Restart Pi after recovery. Profile names may contain only letters, digits, `_`, and `-`.
+
 ## Flutter refresh
 
 The workflow is:
@@ -130,7 +172,7 @@ Restore archived resources to `~/.pi/agent/`, run `/reload`, and restore the pre
 
 Never commit:
 
-- `auth.json` or provider tokens;
+- `auth.json`, `codex-accounts.json`, account-switch backups, or provider tokens;
 - Pi sessions, goals, trust decisions, or model state;
 - `.env` files;
 - Tax queues/logs;
