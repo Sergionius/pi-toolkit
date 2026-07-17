@@ -26,7 +26,7 @@ set +e
   --no-session-persistence \
   --no-chrome \
   --strict-mcp-config \
-  --mcp-config '{}' \
+  --mcp-config '{"mcpServers":{}}' \
   --output-format json \
   "$prompt" </dev/null >"$stdout_file" 2>"$stderr_file"
 code=$?

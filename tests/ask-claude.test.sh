@@ -56,7 +56,7 @@ assert value("--permission-mode") == "plan"
 assert "--no-session-persistence" in args
 assert "--no-chrome" in args
 assert "--strict-mcp-config" in args
-assert value("--mcp-config") == "{}"
+assert value("--mcp-config") == '{"mcpServers":{}}'
 assert value("--output-format") == "json"
 assert args[-1] == "focused prompt with spaces"
 PY

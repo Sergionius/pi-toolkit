@@ -179,7 +179,7 @@ claude -p
 --permission-mode plan
 --no-session-persistence
 --no-chrome
---strict-mcp-config --mcp-config '{}'
+--strict-mcp-config --mcp-config '{"mcpServers":{}}'
 --output-format json
 ```
 
