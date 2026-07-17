@@ -1,0 +1,23 @@
+node_modules/
+.DS_Store
+*.bak
+*.log
+*.vsix
+*.tmp
+
+# Pi runtime state and credentials must never be committed.
+auth.json
+sessions/
+goals.json
+trust.json
+models-store.json
+
+# Generated/cache data.
+.pi/figma-cache/
+.dart_tool/
+coverage/
+
+# Local environment and secret files.
+.env
+.env.*
+!.env.example
