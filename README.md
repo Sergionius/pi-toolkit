@@ -18,6 +18,7 @@ Private personal [Pi](https://pi.dev) package containing reusable extensions, sk
 ### Skills
 
 - `figma-to-css` — workflow for implementing screens from Figma.
+- `ask-claude` — read-only second opinion from Claude Code for debugging, investigation, architecture, and adversarial review.
 
 ### Bundled integrations
 
@@ -74,8 +75,36 @@ Features are enabled by environment variables; values are never stored in this r
 - `PI_FLUTTER_REFRESH_DISABLED=1` — disables automatic Flutter refresh.
 - `PI_FLUTTER_REFRESH_TIMEOUT_SECONDS` — bridge response timeout, default `10`.
 - `PI_TOOLKIT_VSCODE_EXTENSIONS_DIR` — optional VS Code extension directory override, primarily for tests.
+- `ASK_CLAUDE_MODEL` — model used by the `ask-claude` skill, default `opus`.
+- `ASK_CLAUDE_EFFORT` — Claude reasoning effort, default `high`.
 
 `config/settings.example.json` contains sanitized defaults. It is documentation only and is never copied over the active Pi settings automatically.
+
+## Ask Claude
+
+The `ask-claude` skill invokes Claude Code as a read-only consultant when the user explicitly asks for a Claude opinion/review or when an investigation is stuck after multiple failed attempts.
+
+Requirements:
+
+```bash
+claude --version
+claude auth status
+```
+
+Force-load the skill with:
+
+```text
+/skill:ask-claude
+```
+
+The bundled wrapper uses `claude -p`, `--permission-mode plan`, disables session persistence, Chrome, and external MCP configuration, and returns only Claude's result. It never applies recommendations automatically; Pi presents and evaluates the answer, then asks for approval.
+
+Defaults and optional overrides:
+
+```bash
+export ASK_CLAUDE_MODEL=opus   # or sonnet
+export ASK_CLAUDE_EFFORT=high  # low, medium, high, xhigh, max
+```
 
 ## Multiple Codex accounts
 
@@ -148,7 +177,7 @@ npm install
 npm test
 ```
 
-Tests load every extension, check command registration, exercise the Flutter handshake, and verify idempotent VS Code bridge synchronization in a temporary directory.
+Tests load every extension, check command registration, exercise the Flutter handshake, verify the Claude wrapper with a mock CLI, and verify idempotent VS Code bridge synchronization in temporary directories.
 
 ## Migration from global files
 

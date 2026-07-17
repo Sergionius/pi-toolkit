@@ -1,6 +1,6 @@
 {
   "name": "@sergionius/pi-toolkit",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "Personal Pi extensions, skills, Flutter refresh bridge, and setup diagnostics",
   "keywords": [
@@ -8,7 +8,7 @@
   ],
   "type": "module",
   "scripts": {
-    "test": "node --test tests/*.test.mjs && bash tests/flutter-refresh.test.sh"
+    "test": "node --test tests/*.test.mjs && bash tests/flutter-refresh.test.sh && bash tests/ask-claude.test.sh"
   },
   "dependencies": {
     "jiti": "^2.6.1"
