@@ -74,6 +74,14 @@ test("agterm status follows the settled Pi lifecycle and keeps completion sticky
         ],
         options: { timeout: 1_000 },
       },
+      {
+        command: "agtermctl",
+        args: [
+          "notify", "pi task completed", "--title", "pi", "--target", "session-1",
+          "--socket", "/tmp/agterm.sock",
+        ],
+        options: { timeout: 1_000 },
+      },
     ]);
   });
 });
@@ -85,8 +93,9 @@ test("auto-reset completion remains available as an opt-in mode", async () => {
   }, async () => {
     const { handlers, calls } = await loadExtension();
     await handlers.get("agent_settled")();
-    assert.deepEqual(calls[0].args, [
-      "session", "status", "completed", "--auto-reset", "--target", "session-2",
+    assert.deepEqual(calls.map((call) => call.args), [
+      ["session", "status", "completed", "--auto-reset", "--target", "session-2"],
+      ["notify", "pi task completed", "--title", "pi", "--target", "session-2"],
     ]);
   });
 });

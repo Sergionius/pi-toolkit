@@ -26,10 +26,8 @@ function statusArgs(status: AgtermStatus, flags: string[] = []): string[] | unde
 }
 
 export default function (pi: ExtensionAPI) {
-  async function report(status: AgtermStatus, flags: string[] = []): Promise<boolean> {
-    const args = statusArgs(status, flags);
+  async function runAgtermctl(args: string[] | undefined): Promise<boolean> {
     if (!args) return false;
-
     try {
       await pi.exec("agtermctl", args, { timeout: 1_000 });
       return true;
@@ -39,13 +37,27 @@ export default function (pi: ExtensionAPI) {
     }
   }
 
+  async function report(status: AgtermStatus, flags: string[] = []): Promise<boolean> {
+    return runAgtermctl(statusArgs(status, flags));
+  }
+
+  async function notifyCompleted(): Promise<void> {
+    const target = process.env.AGTERM_SESSION_ID?.trim();
+    if (!target || disabled()) return;
+
+    const args = ["notify", "pi task completed", "--title", "pi", "--target", target];
+    const socket = process.env.AGTERM_SOCKET?.trim();
+    if (socket) args.push("--socket", socket);
+    await runAgtermctl(args);
+  }
+
   pi.on("agent_start", async () => {
     await report("active", ["--blink"]);
   });
 
   // Fires only after retries, compaction retries, and queued continuations have finished.
   pi.on("agent_settled", async () => {
-    await report("completed", completedFlags());
+    if (await report("completed", completedFlags())) await notifyCompleted();
   });
 
   pi.registerCommand("agterm-status-test", {

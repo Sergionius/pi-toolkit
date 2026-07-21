@@ -152,7 +152,7 @@ Restart Pi after recovery. Profile names may contain only letters, digits, `_`, 
 
 The extension reports `active --blink` on `agent_start` and `completed` on `agent_settled`, after retries, compaction retries, and queued continuations finish. Completion is sticky by default, so switching to another agterm session does not remove the completed glyph from the first one. Typing in the completed session or starting another Pi turn clears/replaces it through agterm's normal status behavior.
 
-The integration uses `agtermctl` directly and forwards agterm's socket, pane role, and stable pane ID. It does not create duplicate desktop notifications or clear notification badges.
+The integration uses `agtermctl` directly and forwards agterm's socket, pane role, and stable pane ID. After a successful completion status update it posts one targeted notification, producing agterm's `+1` unseen badge alongside the green glyph. The badge clears through agterm's normal visit behavior; the extension never clears it prematurely.
 
 ## Flutter refresh
 
