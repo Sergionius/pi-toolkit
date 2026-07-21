@@ -30,6 +30,9 @@ ${goal}
 Work autonomously until the objective is achieved or genuinely blocked. Use get_goal when you need goal state. When achieved, call update_goal with status "complete". Mark "blocked" only after the same blocking condition has recurred for at least three consecutive goal turns.`;
 
 export default function (pi: ExtensionAPI) {
+  let lastRunErrored = false;
+  let continuationStarted = false;
+
   pi.on("input", async (event, ctx) => {
     if (event.source !== "extension" || event.text !== AUTO_CONTINUE_PROMPT) return;
     const goal = currentGoal(ctx);
@@ -39,22 +42,50 @@ export default function (pi: ExtensionAPI) {
     }
   });
 
-  pi.on("agent_end", async (_event, ctx) => {
+  pi.on("agent_start", async () => {
+    lastRunErrored = false;
+    continuationStarted = false;
+  });
+
+  pi.on("agent_end", async (event) => {
+    lastRunErrored = false;
+    for (const message of [...event.messages].reverse()) {
+      if (message.role === "assistant") {
+        lastRunErrored = message.stopReason === "error";
+        break;
+      }
+    }
+  });
+
+  pi.on("agent_settled", async (_event, ctx) => {
+    if (continuationStarted) return;
+
     const store = loadStore();
     const id = threadId(ctx);
     const goal = store.goals[id];
-    if (goal?.status === "active" && goal.autoTurns < MAX_AUTO_GOAL_TURNS) {
-      if (store.planModes?.[id]?.active) {
-        store.planModes[id] = { ...store.planModes[id], active: false, updatedAt: Math.floor(Date.now() / 1000) };
-      }
-      goal.autoTurns += 1;
+    if (!goal || goal.status !== "active") return;
+
+    if (lastRunErrored) {
+      goal.status = "paused";
       goal.updatedAt = Math.floor(Date.now() / 1000);
       store.goals[id] = goal;
       saveStore(store);
-      const latestGoal = currentGoal(ctx);
-      if (latestGoal?.status === "active") {
-        pi.sendUserMessage(AUTO_CONTINUE_PROMPT, { deliverAs: "followUp" });
-      }
+      ctx.ui.notify("Goal paused after a model/provider error. Use /goal resume when the model is available.", "warning");
+      return;
+    }
+
+    if (goal.autoTurns >= MAX_AUTO_GOAL_TURNS) return;
+    if (store.planModes?.[id]?.active) {
+      store.planModes[id] = { ...store.planModes[id], active: false, updatedAt: Math.floor(Date.now() / 1000) };
+    }
+    goal.autoTurns += 1;
+    goal.updatedAt = Math.floor(Date.now() / 1000);
+    store.goals[id] = goal;
+    saveStore(store);
+
+    if (currentGoal(ctx)?.status === "active") {
+      continuationStarted = true;
+      pi.sendUserMessage(AUTO_CONTINUE_PROMPT);
     }
   });
 

@@ -6,7 +6,7 @@ Private personal [Pi](https://pi.dev) package containing reusable extensions, sk
 
 ### Extensions
 
-- `plan/` and `goal/` — conversational plan mode and autonomous goals.
+- `plan/` and `goal/` — conversational plan mode and autonomous goals. Goal continuations start only after Pi fully settles; model/provider errors pause the goal without consuming an autonomous turn or queuing retries. Resume explicitly with `/goal resume` after service recovery.
 - `agterm-status.ts` — pane-aware agterm lifecycle status integration with persistent completion indicators.
 - `codex-status.ts` — Codex usage and reset-credit commands.
 - `codex-accounts.ts` — local multi-account manager for OpenAI/Codex OAuth profiles.
