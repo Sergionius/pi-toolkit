@@ -7,7 +7,7 @@ import { createJiti } from "jiti";
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const jiti = createJiti(import.meta.url);
 
-async function loadExtension() {
+async function loadExtension({ focusStates = [] } = {}) {
   const handlers = new Map();
   const commands = new Map();
   const calls = [];
@@ -17,6 +17,16 @@ async function loadExtension() {
     registerCommand(name, definition) { commands.set(name, definition); },
     async exec(command, args, options) {
       calls.push({ command, args, options });
+      if (args[0] === "tree") {
+        const active = focusStates.shift() ?? false;
+        return {
+          stdout: JSON.stringify({
+            result: { tree: { workspaces: [{ sessions: [{ id: process.env.AGTERM_SESSION_ID, active }] }] } },
+          }),
+          stderr: "",
+          code: 0,
+        };
+      }
       return { stdout: "", stderr: "", code: 0 };
     },
   });
@@ -27,6 +37,7 @@ function withAgtermEnvironment(overrides, callback) {
   const names = [
     "AGTERM_SESSION_ID",
     "AGTERM_SOCKET",
+    "AGTERM_WINDOW_ID",
     "AGTERM_PANE",
     "AGTERM_PANE_ID",
     "AGTERM_AGENT_STATUS_DISABLED",
@@ -48,6 +59,7 @@ test("agterm status follows the settled Pi lifecycle and keeps completion sticky
   await withAgtermEnvironment({
     AGTERM_SESSION_ID: "session-1",
     AGTERM_SOCKET: "/tmp/agterm.sock",
+    AGTERM_WINDOW_ID: "window-1",
     AGTERM_PANE: "right",
     AGTERM_PANE_ID: "pane-token",
   }, async () => {
@@ -76,10 +88,20 @@ test("agterm status follows the settled Pi lifecycle and keeps completion sticky
       },
       {
         command: "agtermctl",
+        args: ["tree", "--json", "--socket", "/tmp/agterm.sock", "--window", "window-1"],
+        options: { timeout: 1_000 },
+      },
+      {
+        command: "agtermctl",
         args: [
           "notify", "pi task completed", "--title", "pi", "--target", "session-1",
-          "--socket", "/tmp/agterm.sock",
+          "--socket", "/tmp/agterm.sock", "--window", "window-1",
         ],
+        options: { timeout: 1_000 },
+      },
+      {
+        command: "agtermctl",
+        args: ["tree", "--json", "--socket", "/tmp/agterm.sock", "--window", "window-1"],
         options: { timeout: 1_000 },
       },
     ]);
@@ -95,7 +117,34 @@ test("auto-reset completion remains available as an opt-in mode", async () => {
     await handlers.get("agent_settled")();
     assert.deepEqual(calls.map((call) => call.args), [
       ["session", "status", "completed", "--auto-reset", "--target", "session-2"],
+      ["tree", "--json"],
       ["notify", "pi task completed", "--title", "pi", "--target", "session-2"],
+      ["tree", "--json"],
+    ]);
+  });
+});
+
+test("completion does not leave an unseen badge when its session is already focused", async () => {
+  await withAgtermEnvironment({ AGTERM_SESSION_ID: "session-focused" }, async () => {
+    const { handlers, calls } = await loadExtension({ focusStates: [true] });
+    await handlers.get("agent_settled")();
+    assert.deepEqual(calls.map((call) => call.args), [
+      ["session", "status", "completed", "--target", "session-focused"],
+      ["tree", "--json"],
+    ]);
+  });
+});
+
+test("completion clears the badge if the session gains focus while notification is delivered", async () => {
+  await withAgtermEnvironment({ AGTERM_SESSION_ID: "session-race" }, async () => {
+    const { handlers, calls } = await loadExtension({ focusStates: [false, true] });
+    await handlers.get("agent_settled")();
+    assert.deepEqual(calls.map((call) => call.args), [
+      ["session", "status", "completed", "--target", "session-race"],
+      ["tree", "--json"],
+      ["notify", "pi task completed", "--title", "pi", "--target", "session-race"],
+      ["tree", "--json"],
+      ["session", "seen", "--target", "session-race"],
     ]);
   });
 });

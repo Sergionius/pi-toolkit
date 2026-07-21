@@ -29,8 +29,8 @@ export default function (pi: ExtensionAPI) {
   async function runAgtermctl(args: string[] | undefined): Promise<boolean> {
     if (!args) return false;
     try {
-      await pi.exec("agtermctl", args, { timeout: 1_000 });
-      return true;
+      const result = await pi.exec("agtermctl", args, { timeout: 1_000 });
+      return result.code === 0;
     } catch {
       // Status reporting is advisory and must never interrupt Pi's agent loop.
       return false;
@@ -41,14 +41,42 @@ export default function (pi: ExtensionAPI) {
     return runAgtermctl(statusArgs(status, flags));
   }
 
+  function scopedArgs(args: string[]): string[] {
+    const socket = process.env.AGTERM_SOCKET?.trim();
+    const windowId = process.env.AGTERM_WINDOW_ID?.trim();
+    if (socket) args.push("--socket", socket);
+    if (windowId) args.push("--window", windowId);
+    return args;
+  }
+
+  async function targetIsFocused(target: string): Promise<boolean> {
+    try {
+      const result = await pi.exec("agtermctl", scopedArgs(["tree", "--json"]), { timeout: 1_000 });
+      if (result.code !== 0) return false;
+      const payload = JSON.parse(result.stdout) as {
+        result?: { tree?: { workspaces?: Array<{ sessions?: Array<{ id?: string; active?: boolean }> }> } };
+      };
+      return payload.result?.tree?.workspaces?.some((workspace) =>
+        workspace.sessions?.some((session) =>
+          session.id?.toLowerCase() === target.toLowerCase() && session.active === true,
+        ),
+      ) === true;
+    } catch {
+      return false;
+    }
+  }
+
   async function notifyCompleted(): Promise<void> {
     const target = process.env.AGTERM_SESSION_ID?.trim();
-    if (!target || disabled()) return;
+    if (!target || disabled() || await targetIsFocused(target)) return;
 
-    const args = ["notify", "pi task completed", "--title", "pi", "--target", target];
-    const socket = process.env.AGTERM_SOCKET?.trim();
-    if (socket) args.push("--socket", socket);
-    await runAgtermctl(args);
+    const notified = await runAgtermctl(scopedArgs([
+      "notify", "pi task completed", "--title", "pi", "--target", target,
+    ]));
+    // Close the focus race between the pre-check and notification delivery.
+    if (notified && await targetIsFocused(target)) {
+      await runAgtermctl(scopedArgs(["session", "seen", "--target", target]));
+    }
   }
 
   pi.on("agent_start", async () => {
