@@ -7,7 +7,7 @@ Private personal [Pi](https://pi.dev) package containing reusable extensions, sk
 ### Extensions
 
 - `plan/` and `goal/` — conversational plan mode and autonomous goals.
-- `agterm-status.ts` — agterm active/completed status integration.
+- `agterm-status.ts` — pane-aware agterm lifecycle status integration with persistent completion indicators.
 - `codex-status.ts` — Codex usage and reset-credit commands.
 - `codex-accounts.ts` — local multi-account manager for OpenAI/Codex OAuth profiles.
 - `figma-context.ts` — `figma_get_screen_context` tool.
@@ -69,8 +69,9 @@ After an update that changes the VS Code bridge, run `/reload`, `/pi-toolkit-syn
 Features are enabled by environment variables; values are never stored in this repository:
 
 - `FIGMA_TOKEN` — Figma API access.
-- `AGTERM_SESSION_ID` — supplied by agterm.
+- `AGTERM_SESSION_ID`, `AGTERM_SOCKET`, `AGTERM_PANE`, and `AGTERM_PANE_ID` — supplied by agterm and used to target the exact session and pane.
 - `AGTERM_AGENT_STATUS_DISABLED=1` — disables agterm status reporting.
+- `PI_AGTERM_COMPLETED_MODE=auto-reset` — restores agterm's one-shot completion behavior. By default, completed glyphs remain until you interact with that session or the agent starts again.
 - `TAX_API_KEY` and `TAX_SERVER` — consumed by the separate Tax package.
 - `PI_FLUTTER_REFRESH_DISABLED=1` — disables automatic Flutter refresh.
 - `PI_FLUTTER_REFRESH_TIMEOUT_SECONDS` — bridge response timeout, default `10`.
@@ -146,6 +147,12 @@ chmod 600 "${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/auth.json"
 ```
 
 Restart Pi after recovery. Profile names may contain only letters, digits, `_`, and `-`.
+
+## agterm status
+
+The extension reports `active --blink` on `agent_start` and `completed` on `agent_settled`, after retries, compaction retries, and queued continuations finish. Completion is sticky by default, so switching to another agterm session does not remove the completed glyph from the first one. Typing in the completed session or starting another Pi turn clears/replaces it through agterm's normal status behavior.
+
+The integration uses `agtermctl` directly and forwards agterm's socket, pane role, and stable pane ID. It does not create duplicate desktop notifications or clear notification badges.
 
 ## Flutter refresh
 

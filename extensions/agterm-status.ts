@@ -1,146 +1,51 @@
-import { CustomEditor, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { spawn } from "node:child_process";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 type AgtermStatus = "idle" | "active" | "completed" | "blocked";
 
-const WARN_KEY = "agterm-status-warning";
-const COMPLETED_DELAY_MS = 250;
-const COMPLETED_RETRY_MS = 250;
-const COMPLETED_RETRY_ATTEMPTS = 20;
-
-let warnedMissingCtl = false;
-
-function sessionId() {
-  return process.env.AGTERM_SESSION_ID?.trim();
-}
-
-function disabled() {
+function disabled(): boolean {
   return process.env.AGTERM_AGENT_STATUS_DISABLED === "1";
 }
 
-function canReportStatus() {
-  return Boolean(sessionId()) && !disabled();
+function completedFlags(): string[] {
+  return process.env.PI_AGTERM_COMPLETED_MODE === "auto-reset" ? ["--auto-reset"] : [];
 }
 
-function spawnAgtermctl(args: string[], ctx?: any) {
-  const child = spawn("agtermctl", args, {
-    detached: true,
-    stdio: "ignore",
-  });
+function statusArgs(status: AgtermStatus, flags: string[] = []): string[] | undefined {
+  const target = process.env.AGTERM_SESSION_ID?.trim();
+  if (!target || disabled()) return undefined;
 
-  child.once("error", (error: NodeJS.ErrnoException) => {
-    if (error.code !== "ENOENT" || warnedMissingCtl) return;
-    warnedMissingCtl = true;
-    try {
-      ctx?.ui?.setWidget?.(WARN_KEY, [
-        "agterm status disabled: agtermctl was not found on PATH",
-        "Install it from agterm Help > Install Command Line Tool...",
-      ]);
-      setTimeout(() => {
-        try {
-          ctx?.ui?.setWidget?.(WARN_KEY, []);
-        } catch {
-          // ignore stale ctx
-        }
-      }, 5000).unref();
-    } catch {
-      // ignore stale ctx
-    }
-  });
+  const args = ["session", "status", status, ...flags, "--target", target];
+  const socket = process.env.AGTERM_SOCKET?.trim();
+  const pane = process.env.AGTERM_PANE?.trim();
+  const paneId = process.env.AGTERM_PANE_ID?.trim();
 
-  child.unref();
-}
-
-function reportStatus(status: AgtermStatus, flags: string[] = [], ctx?: any) {
-  const target = sessionId();
-  if (!target || disabled()) return;
-  spawnAgtermctl(["session", "status", status, ...flags, "--auto-reset", "--target", target], ctx);
-}
-
-function clearUnseen(ctx?: any) {
-  const target = sessionId();
-  if (!target || disabled()) return;
-  spawnAgtermctl(["session", "seen", "--target", target], ctx);
-}
-
-function reportCompleted(ctx?: any) {
-  const target = sessionId();
-  if (!target || disabled()) return;
-  reportStatus("completed", ["--blink"], ctx);
-  spawnAgtermctl(["notify", "pi task completed", "--title", "pi", "--target", target], ctx);
+  if (socket) args.push("--socket", socket);
+  if (pane) args.push("--pane", pane);
+  if (paneId) args.push("--pane-id", paneId);
+  return args;
 }
 
 export default function (pi: ExtensionAPI) {
-  pi.on("session_start", async (_event, ctx) => {
+  async function report(status: AgtermStatus, flags: string[] = []): Promise<boolean> {
+    const args = statusArgs(status, flags);
+    if (!args) return false;
+
     try {
-      ctx.ui.setEditorComponent((tui, theme, keybindings) => {
-        class AgtermEditor extends CustomEditor {
-          handleInput(data: string): void {
-            try {
-              clearUnseen(ctx);
-            } catch {
-              // ignore stale ctx
-            }
-            super.handleInput(data);
-          }
-        }
-        return new AgtermEditor(tui, theme, keybindings);
-      });
+      await pi.exec("agtermctl", args, { timeout: 1_000 });
+      return true;
     } catch {
-      // ignore stale ctx
+      // Status reporting is advisory and must never interrupt Pi's agent loop.
+      return false;
     }
+  }
+
+  pi.on("agent_start", async () => {
+    await report("active", ["--blink"]);
   });
 
-  pi.on("input", async (_event, ctx) => {
-    try {
-      clearUnseen(ctx);
-    } catch {
-      // ignore stale ctx
-    }
-  });
-
-  pi.on("agent_start", async (_event, ctx) => {
-    try {
-      clearUnseen(ctx);
-      reportStatus("active", [], ctx);
-    } catch {
-      // ignore stale ctx
-    }
-  });
-
-  pi.on("agent_end", async (_event, ctx) => {
-    let attempts = 0;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-
-    const tryReportCompleted = () => {
-      try {
-        if (ctx.hasPendingMessages?.()) return;
-        if (ctx.isIdle?.()) {
-          reportCompleted(ctx);
-          return;
-        }
-        if (attempts++ >= COMPLETED_RETRY_ATTEMPTS) return;
-        timer = setTimeout(tryReportCompleted, COMPLETED_RETRY_MS);
-        timer.unref();
-      } catch {
-        // ctx became stale; stop retrying safely
-      }
-    };
-
-    try {
-      timer = setTimeout(tryReportCompleted, COMPLETED_DELAY_MS);
-      timer.unref();
-    } catch {
-      // ignore setup errors
-    }
-  });
-
-  pi.on("session_shutdown", async (_event, ctx) => {
-    try {
-      reportStatus("idle", [], ctx);
-    } catch {
-      // ignore stale ctx
-    }
+  // Fires only after retries, compaction retries, and queued continuations have finished.
+  pi.on("agent_settled", async () => {
+    await report("completed", completedFlags());
   });
 
   pi.registerCommand("agterm-status-test", {
@@ -151,13 +56,17 @@ export default function (pi: ExtensionAPI) {
         ctx.ui.notify("Usage: /agterm-status-test idle|active|completed|blocked", "warning");
         return;
       }
-      if (!canReportStatus()) {
+      if (!process.env.AGTERM_SESSION_ID || disabled()) {
         ctx.ui.notify("Not running in an agterm session, or AGTERM_AGENT_STATUS_DISABLED=1", "warning");
         return;
       }
-      if (status === "completed") reportCompleted(ctx);
-      else reportStatus(status, [], ctx);
-      ctx.ui.notify(`agterm status set to ${status}`, "info");
+
+      const flags = status === "completed" ? completedFlags() : [];
+      const reported = await report(status, flags);
+      ctx.ui.notify(
+        reported ? `agterm status set to ${status}` : "Failed to update agterm status via agtermctl",
+        reported ? "info" : "warning",
+      );
     },
   });
 }
