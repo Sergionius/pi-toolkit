@@ -1,4 +1,4 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { CustomEditor, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 type AgtermStatus = "idle" | "active" | "completed" | "blocked";
 
@@ -13,6 +13,27 @@ export function emitCompletionNotification(stream: TerminalWriter = process.stdo
   if (!stream.isTTY) return false;
   stream.write(AGTERM_COMPLETION_OSC);
   return true;
+}
+
+export class UnseenClearGate {
+  private armed = false;
+  private inFlight = false;
+
+  constructor(private readonly clear: () => Promise<boolean>) {}
+
+  arm(): void {
+    this.armed = true;
+  }
+
+  async onInput(): Promise<void> {
+    if (!this.armed || this.inFlight) return;
+    this.inFlight = true;
+    try {
+      if (await this.clear()) this.armed = false;
+    } finally {
+      this.inFlight = false;
+    }
+  }
 }
 
 function disabled(): boolean {
@@ -54,6 +75,17 @@ export default function (pi: ExtensionAPI) {
     return runAgtermctl(statusArgs(status, flags));
   }
 
+  async function clearUnseen(): Promise<boolean> {
+    const target = process.env.AGTERM_SESSION_ID?.trim();
+    if (!target || disabled()) return false;
+    const args = ["session", "seen", "--target", target];
+    const socket = process.env.AGTERM_SOCKET?.trim();
+    if (socket) args.push("--socket", socket);
+    return runAgtermctl(args);
+  }
+
+  const unseenClearGate = new UnseenClearGate(clearUnseen);
+
   async function notifyCompleted(): Promise<void> {
     if (!process.env.AGTERM_SESSION_ID?.trim() || disabled()) return;
 
@@ -61,7 +93,22 @@ export default function (pi: ExtensionAPI) {
     // suppresses the unseen badge only when this exact pane is focused AND agterm is the active app.
     // OSC has zero display width, so writing it into Pi's terminal stream does not disturb the TUI.
     emitCompletionNotification();
+    unseenClearGate.arm();
   }
+
+  pi.on("session_start", async (_event, ctx) => {
+    // Clear a completion badge on the same first keystroke that agterm uses to clear the green glyph.
+    unseenClearGate.arm();
+    ctx.ui.setEditorComponent((tui, theme, keybindings) => {
+      class AgtermEditor extends CustomEditor {
+        handleInput(data: string): void {
+          void unseenClearGate.onInput();
+          super.handleInput(data);
+        }
+      }
+      return new AgtermEditor(tui, theme, keybindings);
+    });
+  });
 
   pi.on("agent_start", async () => {
     await report("active", ["--blink"]);

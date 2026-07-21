@@ -53,6 +53,24 @@ test("agterm completion uses a zero-width terminal-native OSC notification", asy
   assert.equal(imported.emitCompletionNotification({ isTTY: false, write: () => assert.fail() }), false);
 });
 
+test("the unseen badge clear gate runs once on input and retries after failure", async () => {
+  const { imported } = await loadExtension();
+  const results = [false, true];
+  let calls = 0;
+  const gate = new imported.UnseenClearGate(async () => {
+    calls += 1;
+    return results.shift();
+  });
+
+  await gate.onInput();
+  assert.equal(calls, 0);
+  gate.arm();
+  await gate.onInput();
+  await gate.onInput();
+  await gate.onInput();
+  assert.equal(calls, 2);
+});
+
 test("agterm status follows the settled Pi lifecycle and keeps completion sticky", async () => {
   await withAgtermEnvironment({
     AGTERM_SESSION_ID: "session-1",
@@ -61,7 +79,7 @@ test("agterm status follows the settled Pi lifecycle and keeps completion sticky
     AGTERM_PANE_ID: "pane-token",
   }, async () => {
     const { handlers, calls } = await loadExtension();
-    assert.deepEqual([...handlers.keys()], ["agent_start", "agent_settled"]);
+    assert.deepEqual([...handlers.keys()], ["session_start", "agent_start", "agent_settled"]);
 
     await handlers.get("agent_start")();
     await handlers.get("agent_settled")();
