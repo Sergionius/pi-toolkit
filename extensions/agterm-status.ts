@@ -2,6 +2,19 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 type AgtermStatus = "idle" | "active" | "completed" | "blocked";
 
+type TerminalWriter = {
+  isTTY?: boolean;
+  write(chunk: string): unknown;
+};
+
+export const AGTERM_COMPLETION_OSC = "\x1b]9;pi task completed\x07";
+
+export function emitCompletionNotification(stream: TerminalWriter = process.stdout): boolean {
+  if (!stream.isTTY) return false;
+  stream.write(AGTERM_COMPLETION_OSC);
+  return true;
+}
+
 function disabled(): boolean {
   return process.env.AGTERM_AGENT_STATUS_DISABLED === "1";
 }
@@ -41,42 +54,13 @@ export default function (pi: ExtensionAPI) {
     return runAgtermctl(statusArgs(status, flags));
   }
 
-  function scopedArgs(args: string[]): string[] {
-    const socket = process.env.AGTERM_SOCKET?.trim();
-    const windowId = process.env.AGTERM_WINDOW_ID?.trim();
-    if (socket) args.push("--socket", socket);
-    if (windowId) args.push("--window", windowId);
-    return args;
-  }
-
-  async function targetIsFocused(target: string): Promise<boolean> {
-    try {
-      const result = await pi.exec("agtermctl", scopedArgs(["tree", "--json"]), { timeout: 1_000 });
-      if (result.code !== 0) return false;
-      const payload = JSON.parse(result.stdout) as {
-        result?: { tree?: { workspaces?: Array<{ sessions?: Array<{ id?: string; active?: boolean }> }> } };
-      };
-      return payload.result?.tree?.workspaces?.some((workspace) =>
-        workspace.sessions?.some((session) =>
-          session.id?.toLowerCase() === target.toLowerCase() && session.active === true,
-        ),
-      ) === true;
-    } catch {
-      return false;
-    }
-  }
-
   async function notifyCompleted(): Promise<void> {
-    const target = process.env.AGTERM_SESSION_ID?.trim();
-    if (!target || disabled() || await targetIsFocused(target)) return;
+    if (!process.env.AGTERM_SESSION_ID?.trim() || disabled()) return;
 
-    const notified = await runAgtermctl(scopedArgs([
-      "notify", "pi task completed", "--title", "pi", "--target", target,
-    ]));
-    // Close the focus race between the pre-check and notification delivery.
-    if (notified && await targetIsFocused(target)) {
-      await runAgtermctl(scopedArgs(["session", "seen", "--target", target]));
-    }
+    // OSC 9 is handled by the originating agterm pane. Unlike `agtermctl notify`, its native path
+    // suppresses the unseen badge only when this exact pane is focused AND agterm is the active app.
+    // OSC has zero display width, so writing it into Pi's terminal stream does not disturb the TUI.
+    emitCompletionNotification();
   }
 
   pi.on("agent_start", async () => {

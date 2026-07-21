@@ -7,37 +7,27 @@ import { createJiti } from "jiti";
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const jiti = createJiti(import.meta.url);
 
-async function loadExtension({ focusStates = [] } = {}) {
+async function loadExtension({ statusCode = 0 } = {}) {
   const handlers = new Map();
   const commands = new Map();
   const calls = [];
-  const imported = await jiti.import(`${root}/extensions/agterm-status.ts`, { default: true });
-  imported({
+  const imported = await jiti.import(`${root}/extensions/agterm-status.ts`);
+  imported.default({
     on(event, handler) { handlers.set(event, handler); },
     registerCommand(name, definition) { commands.set(name, definition); },
     async exec(command, args, options) {
       calls.push({ command, args, options });
-      if (args[0] === "tree") {
-        const active = focusStates.shift() ?? false;
-        return {
-          stdout: JSON.stringify({
-            result: { tree: { workspaces: [{ sessions: [{ id: process.env.AGTERM_SESSION_ID, active }] }] } },
-          }),
-          stderr: "",
-          code: 0,
-        };
-      }
-      return { stdout: "", stderr: "", code: 0 };
+      const code = command === "agtermctl" && args[0] === "session" ? statusCode : 0;
+      return { stdout: "", stderr: "", code };
     },
   });
-  return { handlers, commands, calls };
+  return { handlers, commands, calls, imported };
 }
 
 function withAgtermEnvironment(overrides, callback) {
   const names = [
     "AGTERM_SESSION_ID",
     "AGTERM_SOCKET",
-    "AGTERM_WINDOW_ID",
     "AGTERM_PANE",
     "AGTERM_PANE_ID",
     "AGTERM_AGENT_STATUS_DISABLED",
@@ -55,11 +45,18 @@ function withAgtermEnvironment(overrides, callback) {
   });
 }
 
+test("agterm completion uses a zero-width terminal-native OSC notification", async () => {
+  const { imported } = await loadExtension();
+  const chunks = [];
+  assert.equal(imported.emitCompletionNotification({ isTTY: true, write: (chunk) => chunks.push(chunk) }), true);
+  assert.deepEqual(chunks, ["\x1b]9;pi task completed\x07"]);
+  assert.equal(imported.emitCompletionNotification({ isTTY: false, write: () => assert.fail() }), false);
+});
+
 test("agterm status follows the settled Pi lifecycle and keeps completion sticky", async () => {
   await withAgtermEnvironment({
     AGTERM_SESSION_ID: "session-1",
     AGTERM_SOCKET: "/tmp/agterm.sock",
-    AGTERM_WINDOW_ID: "window-1",
     AGTERM_PANE: "right",
     AGTERM_PANE_ID: "pane-token",
   }, async () => {
@@ -86,24 +83,6 @@ test("agterm status follows the settled Pi lifecycle and keeps completion sticky
         ],
         options: { timeout: 1_000 },
       },
-      {
-        command: "agtermctl",
-        args: ["tree", "--json", "--socket", "/tmp/agterm.sock", "--window", "window-1"],
-        options: { timeout: 1_000 },
-      },
-      {
-        command: "agtermctl",
-        args: [
-          "notify", "pi task completed", "--title", "pi", "--target", "session-1",
-          "--socket", "/tmp/agterm.sock", "--window", "window-1",
-        ],
-        options: { timeout: 1_000 },
-      },
-      {
-        command: "agtermctl",
-        args: ["tree", "--json", "--socket", "/tmp/agterm.sock", "--window", "window-1"],
-        options: { timeout: 1_000 },
-      },
     ]);
   });
 });
@@ -115,37 +94,20 @@ test("auto-reset completion remains available as an opt-in mode", async () => {
   }, async () => {
     const { handlers, calls } = await loadExtension();
     await handlers.get("agent_settled")();
-    assert.deepEqual(calls.map((call) => call.args), [
-      ["session", "status", "completed", "--auto-reset", "--target", "session-2"],
-      ["tree", "--json"],
-      ["notify", "pi task completed", "--title", "pi", "--target", "session-2"],
-      ["tree", "--json"],
+    assert.deepEqual(calls.map(({ command, args }) => ({ command, args })), [
+      {
+        command: "agtermctl",
+        args: ["session", "status", "completed", "--auto-reset", "--target", "session-2"],
+      },
     ]);
   });
 });
 
-test("completion does not leave an unseen badge when its session is already focused", async () => {
-  await withAgtermEnvironment({ AGTERM_SESSION_ID: "session-focused" }, async () => {
-    const { handlers, calls } = await loadExtension({ focusStates: [true] });
+test("completion notification is skipped when the status update fails", async () => {
+  await withAgtermEnvironment({ AGTERM_SESSION_ID: "session-failed" }, async () => {
+    const { handlers, calls } = await loadExtension({ statusCode: 1 });
     await handlers.get("agent_settled")();
-    assert.deepEqual(calls.map((call) => call.args), [
-      ["session", "status", "completed", "--target", "session-focused"],
-      ["tree", "--json"],
-    ]);
-  });
-});
-
-test("completion clears the badge if the session gains focus while notification is delivered", async () => {
-  await withAgtermEnvironment({ AGTERM_SESSION_ID: "session-race" }, async () => {
-    const { handlers, calls } = await loadExtension({ focusStates: [false, true] });
-    await handlers.get("agent_settled")();
-    assert.deepEqual(calls.map((call) => call.args), [
-      ["session", "status", "completed", "--target", "session-race"],
-      ["tree", "--json"],
-      ["notify", "pi task completed", "--title", "pi", "--target", "session-race"],
-      ["tree", "--json"],
-      ["session", "seen", "--target", "session-race"],
-    ]);
+    assert.deepEqual(calls.map((call) => call.command), ["agtermctl"]);
   });
 });
 
