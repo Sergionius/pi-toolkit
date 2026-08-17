@@ -73,6 +73,76 @@ const PLAN_PROMPT = (task: string) => `Plan this request in Plan Mode. Do not mo
 const GOAL_PLAN_PROMPT = (goal: string) => `Plan this future goal in Plan Mode. Do not modify files or run mutating commands. When decision complete, output exactly one <proposed_plan> block and do not ask whether to proceed.\n\nPotential goal:\n${goal}`;
 const GOAL_KICKOFF = (goal: string) => `Plan Mode is now finished. Ignore any earlier Plan Mode / non-mutating-only instructions from the planning turn and execute the approved goal.\n\nPursue the active thread goal:\n${goal}\n\nWork autonomously until the objective is achieved or genuinely blocked. Use get_goal when you need goal state. When achieved, call update_goal with status "complete". Mark "blocked" only after the same blocking condition has recurred for at least three consecutive goal turns.`;
 
+export const RALPHEX_PLAN_INSTRUCTIONS = `# Ralphex implementation plan creation
+
+Create an implementation plan for the request below. Work conversationally in the current Pi session. Your only deliverable is an accepted plan file; do not implement the requested feature.
+
+## Workflow
+
+1. Ground yourself in the actual project before asking questions. Read project instructions and inspect relevant code, structure, dependencies, and existing conventions directly with the available read-only tools. Keep exploration targeted, but read as much as needed to understand the change. Do not launch subagents or delegate the investigation.
+2. Briefly summarize what you found: the current flow, likely affected files, constraints, and remaining ambiguity.
+3. Ask only questions that materially affect behavior, scope, compatibility, interfaces, or architecture and cannot be answered from the repository. Ask exactly one question at a time. Do not ask about a testing preference.
+4. If there is a meaningful implementation choice, present 2–3 approaches with concrete trade-offs, lead with a recommendation, and ask the user to choose. Skip this when there is one obvious path.
+5. Once the request is decision-complete, show the full Markdown plan as a draft in chat. Do not create or modify any file yet. Explicitly invite the user to accept the draft or give revision feedback.
+6. Revise and show a new complete draft after feedback. Continue until the user explicitly accepts the current draft.
+7. Only after explicit acceptance, check for a matching existing plan under docs/plans/. If one exists, do not overwrite or duplicate it: report its path and stop. Otherwise write the accepted draft to docs/plans/YYYYMMDD-<slug>.md, using the current local date and a short lowercase ASCII kebab-case slug.
+8. After writing, report only the created plan path and stop. Do not implement it, review it, commit it, create or switch branches, create a worktree, or invoke another workflow.
+
+## Mutation boundary
+
+Before explicit acceptance, use only non-mutating exploration. Do not call edit or write, and do not run commands that modify project files or Git state. After acceptance, the only allowed project mutation is creating the single plan file (and its docs/plans directory when absent).
+
+## Plan format
+
+Use the language of the user's request, except that every executable task heading must retain the exact structural form ### Task N: <title> with sequential integers.
+
+The plan should contain:
+
+# <Title>
+
+## Goal
+A concrete description of the intended outcome.
+
+## Context
+Relevant current behavior, files, patterns, dependencies, and constraints discovered in the repository.
+
+## Scope
+What the implementation includes.
+
+## Out of Scope
+Include only when useful to prevent ambiguity.
+
+## Implementation Steps
+
+### Task 1: <specific completed unit>
+
+**Files:**
+- Modify: path/to/file
+- Create: path/to/file (only when genuinely needed)
+
+- [ ] concrete, automatable implementation action
+- [ ] another action belonging to the same logical unit
+
+Continue with ordered Task sections. Put executable checkboxes only inside Task sections. Tasks should be specific, reasonably sized, dependency-ordered, and sufficient for another coding agent to implement without making product or architecture decisions. Every Task must leave the project in a state that passes the plan's applicable Validation; combine interdependent changes into one Task when an intermediate split would knowingly break compilation or analysis.
+
+## Validation
+Include the project's existing cheapest relevant non-destructive compile, analyze, typecheck, lint, or build commands when they can be discovered. Do not invent a test framework, mandatory tests, coverage targets, or testing tasks for a project that does not already use them. Tests belong here only when the project already relies on them for this area or the user explicitly requested them.
+
+## Acceptance Criteria
+A short, observable list of conditions proving the requested behavior is complete. Do not use checkboxes here.
+
+## Planning constraints
+
+- Prefer the simplest implementation that fits existing project conventions; avoid speculative abstractions and future-proofing.
+- Use exact file paths when they can be discovered. Clearly identify any path that can only be resolved during implementation.
+- Do not add plan review, code review, deployment, release, commit, branch, worktree, rebase, squash, push, or merge steps.
+- Do not propose implementing anything after the plan is created.
+- Do not wrap the draft in <proposed_plan> tags; present it as ordinary Markdown so this workflow remains separate from Codex Plan Mode.`;
+
+export function buildRalphexPlanPrompt(request: string) {
+  return `${RALPHEX_PLAN_INSTRUCTIONS}\n\n## User request\n\n${request.trim()}`;
+}
+
 async function sendPrompt(pi: ExtensionAPI, ctx: ExtensionCommandContext | any, prompt: string) {
   if (typeof ctx.waitForIdle === "function") await ctx.waitForIdle();
   if (typeof ctx.isIdle === "function" && !ctx.isIdle()) {
@@ -117,6 +187,26 @@ function assistantTextFromAgentEnd(event: any) {
         : String(message.content ?? ""),
     )
     .join("\n");
+}
+
+export async function startRalphexPlan(
+  pi: ExtensionAPI,
+  ctx: ExtensionCommandContext,
+  args: string,
+  disablePlanMode: typeof setPlanMode = setPlanMode,
+) {
+  let request = args.trim();
+  if (!request) {
+    request = (await ctx.ui.input("Ralphex plan", "What should the implementation plan cover?"))?.trim() ?? "";
+    if (!request) {
+      ctx.ui.notify("Ralphex plan creation cancelled", "warning");
+      return;
+    }
+  }
+
+  disablePlanMode(ctx, false);
+  ctx.ui.notify("Starting /ralphex-plan", "info");
+  await sendPrompt(pi, ctx, buildRalphexPlanPrompt(request));
 }
 
 export default function (pi: ExtensionAPI) {
@@ -236,6 +326,13 @@ export default function (pi: ExtensionAPI) {
       setPlanMode(ctx, true, task || undefined);
       ctx.ui.notify(task ? "Starting /plan" : "Plan mode enabled", "info");
       if (task) await sendPrompt(pi, ctx, PLAN_PROMPT(task));
+    },
+  });
+
+  pi.registerCommand("ralphex-plan", {
+    description: "Create an accepted implementation plan in docs/plans/ without implementing it",
+    handler: async (args, ctx) => {
+      await startRalphexPlan(pi, ctx, args);
     },
   });
 

@@ -9,19 +9,21 @@ const jiti = createJiti(import.meta.url);
 
 async function loadExtension({ statusCode = 0 } = {}) {
   const handlers = new Map();
+  const eventHandlers = new Map();
   const commands = new Map();
   const calls = [];
   const imported = await jiti.import(`${root}/extensions/agterm-status.ts`);
   imported.default({
     on(event, handler) { handlers.set(event, handler); },
     registerCommand(name, definition) { commands.set(name, definition); },
+    events: { on(event, handler) { eventHandlers.set(event, handler); } },
     async exec(command, args, options) {
       calls.push({ command, args, options });
       const code = command === "agtermctl" && args[0] === "session" ? statusCode : 0;
       return { stdout: "", stderr: "", code };
     },
   });
-  return { handlers, commands, calls, imported };
+  return { handlers, eventHandlers, commands, calls, imported };
 }
 
 function withAgtermEnvironment(overrides, callback) {
@@ -101,6 +103,18 @@ test("agterm status follows the settled Pi lifecycle and keeps completion sticky
         ],
         options: { timeout: 1_000 },
       },
+    ]);
+  });
+});
+
+test("ralphex lifecycle updates agterm and produces a completion status", async () => {
+  await withAgtermEnvironment({ AGTERM_SESSION_ID: "ralphex-session" }, async () => {
+    const { eventHandlers, calls } = await loadExtension();
+    await eventHandlers.get("ralphex:started")();
+    await eventHandlers.get("ralphex:completed")();
+    assert.deepEqual(calls.map(({ args }) => args), [
+      ["session", "status", "active", "--blink", "--target", "ralphex-session"],
+      ["session", "status", "completed", "--target", "ralphex-session"],
     ]);
   });
 });

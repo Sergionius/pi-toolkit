@@ -6,7 +6,7 @@ Private personal [Pi](https://pi.dev) package containing reusable extensions, sk
 
 ### Extensions
 
-- `plan/` and `goal/` — conversational plan mode and autonomous goals. Goal continuations start only after Pi fully settles; model/provider errors pause the goal without consuming an autonomous turn or queuing retries. Resume explicitly with `/goal resume` after service recovery.
+- `plan/` and `goal/` — conversational plan mode, `/ralphex-plan` implementation-plan creation, and autonomous goals. Goal continuations start only after Pi fully settles; model/provider errors pause the goal without consuming an autonomous turn or queuing retries. Resume explicitly with `/goal resume` after service recovery.
 - `agterm-status.ts` — pane-aware agterm lifecycle status integration with persistent completion indicators.
 - `codex-status.ts` — Codex usage and reset-credit commands.
 - `codex-accounts.ts` — local multi-account manager for OpenAI/Codex OAuth profiles.
@@ -80,6 +80,45 @@ Features are enabled by environment variables; values are never stored in this r
 - `ASK_CLAUDE_EFFORT` — Claude reasoning effort, default `high`.
 
 `config/settings.example.json` contains sanitized defaults. It is documentation only and is never copied over the active Pi settings automatically.
+
+## Ralphex plan
+
+`/ralphex-plan` creates an implementation plan through a conversational workflow in the current Pi session:
+
+```text
+/ralphex-plan add response caching to the API client
+```
+
+Pi first inspects the relevant project files directly, summarizes the current implementation, and asks only material questions that cannot be answered from the repository. If the implementation has a meaningful architectural choice, it presents alternatives and recommends one. It then shows a complete Markdown draft and revises it until explicitly accepted.
+
+Only after acceptance does Pi create `docs/plans/YYYYMMDD-<slug>.md`. Plans use sequential `### Task N:` sections and executable checkboxes inside those sections. Validation steps are included only when the project already has relevant checks or the user requested them; the workflow does not invent test infrastructure or coverage requirements.
+
+The command does not use subagents, review the plan, implement it, create commits or branches, or start another workflow. If invoked without a description, it prompts for one:
+
+```text
+/ralphex-plan
+```
+
+## Ralphex execution and review
+
+Execute an accepted plan task by task:
+
+```text
+/ralphex-exec docs/plans/YYYYMMDD-feature.md
+/ralphex-exec --auto docs/plans/YYYYMMDD-feature.md
+```
+
+Each Task runs in a fresh Pi process. The worker completes exactly one `### Task N:` section, runs the plan's validation (or the project's cheapest existing compile/analyze/typecheck/build check), marks its checkboxes, and creates one `feat: ...` commit containing code plus the updated plan. One fresh retry is allowed. Existing uncommitted changes other than the plan stop execution; running on `main`, `master`, or `trunk` requires confirmation. Interactive mode surfaces material questions, while `--auto` resolves safe engineering decisions from project conventions and records them under `## Execution Notes`.
+
+The first execution stores the pre-task HEAD in an invisible `ralphex-base` comment in the plan. Review uses that exact baseline even when execution happened on the current default branch:
+
+```text
+/ralphex-review docs/plans/YYYYMMDD-feature.md
+```
+
+Review is autonomous: the existing read-only `ask-claude` wrapper reviews the complete diff, a fresh Pi fixer validates every finding and fixes confirmed issues, and Claude reviews again. All severities are considered. There are three normal fix iterations and one final critical/high-only attempt. Fix iterations commit as `fix: address code review findings`. On approval, the plan moves to `docs/plans/completed/` in a `move completed plan: <filename>` commit.
+
+`/ralphex-review` inherits `ASK_CLAUDE_MODEL` and `ASK_CLAUDE_EFFORT` behavior from the existing wrapper. Neither command creates or switches branches, rebases, pushes, or merges. A future `/ralphex-loop` will compose execution and review after both commands have been tested independently.
 
 ## Ask Claude
 

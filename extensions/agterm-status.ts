@@ -110,6 +110,18 @@ export default function (pi: ExtensionAPI) {
     });
   });
 
+  pi.events.on("ralphex:started", async () => {
+    await report("active", ["--blink"]);
+  });
+
+  pi.events.on("ralphex:completed", async () => {
+    if (await report("completed", completedFlags())) await notifyCompleted();
+  });
+
+  pi.events.on("ralphex:failed", async () => {
+    await report("blocked");
+  });
+
   pi.on("agent_start", async () => {
     await report("active", ["--blink"]);
   });

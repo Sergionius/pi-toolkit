@@ -21,6 +21,10 @@ function playCompletionSound() {
 }
 
 export default function (pi: ExtensionAPI) {
+  pi.events.on("ralphex:completed", () => {
+    playCompletionSound();
+  });
+
   pi.on("agent_end", async (_event, ctx) => {
     // Other extensions (notably goal auto-continue) may enqueue follow-up turns in
     // their own agent_end handlers. Defer the check so we only notify when the
