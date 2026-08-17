@@ -129,6 +129,20 @@ Run both phases as one resumable workflow with:
 
 The loop resumes from plan state: it executes remaining Task sections, or skips directly to review when all tasks are checked. With no argument it selects active plans from `docs/plans/`. Internal exec/review completion messages are suppressed; the loop emits one final report, completion sound, and green agterm status only after the whole workflow succeeds. A failure stops the current phase, marks agterm blocked, preserves the working state, and reports the exact resume command. The final report includes task/review counts, validation status, completed plan path, and recorded Execution Notes when present.
 
+### Optional CDT test release
+
+After successful review, `/ralphex-review` and `/ralphex-loop` can run a non-production CDT pipeline:
+
+```text
+/ralphex-review --release test YYYYMMDD-feature.md
+/ralphex-review --release test --id BTL-123 YYYYMMDD-feature.md
+/ralphex-loop --auto --release test --id BTL-123 YYYYMMDD-feature.md
+```
+
+`--id` is optional and repeatable. Ralphex verifies `cdt.yaml`, runs CDT pipeline inspect/plan/preflight, rejects every production-like pipeline, starts `cdt agent-release` detached, and waits for its exact run ID for up to 90 minutes. Release failure or timeout does not undo or fail an already completed plan; the final report includes the reason, run ID, status command, and log path.
+
+After a successful release, Ralphex commits non-ignored release changes with `chore: release <version> [for IDs]` (or a pipeline-based fallback message), then pushes the current branch. A push failure is reported as a warning but does not change the completed result. Release is intentionally unsupported by `/ralphex-exec`, because code must pass Claude review before distribution.
+
 ## Ask Claude
 
 The `ask-claude` skill invokes Claude Code as a read-only consultant when the user explicitly asks for a Claude opinion/review or when an investigation is stuck after multiple failed attempts.

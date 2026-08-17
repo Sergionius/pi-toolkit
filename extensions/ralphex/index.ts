@@ -2,6 +2,7 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-c
 import { access, mkdir, readdir, rename } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { runCdtRelease, type CdtReleaseResult, type ReleaseRequest } from "./cdt";
 import { appendExecutionNote, baseCommit, ensureBaseCommit, executionNotes, firstIncompleteTask, parseTasks, readPlan, writePlan } from "./plan";
 import { runCommand, runPiWorker } from "./process";
 import { claudeReviewPrompt, fixerPrompt, parseClaudeReview, taskPrompt, type ClaudeFinding } from "./prompts";
@@ -21,6 +22,12 @@ type ExecResult = {
   root: string;
   planPath: string;
   tasksCompleted: number;
+};
+
+type ParsedCommandArgs = {
+  auto: boolean;
+  requested: string;
+  release?: ReleaseRequest;
 };
 
 type ReviewResult = {
@@ -53,8 +60,13 @@ async function head(cwd: string): Promise<string> {
 }
 
 async function dirtyPaths(cwd: string): Promise<string[]> {
-  const output = await git(cwd, ["status", "--porcelain=v1", "--untracked-files=all"]);
-  return output.split("\n").filter(Boolean).map((line) => line.slice(3).split(" -> ").pop() ?? "");
+  const result = await runCommand({
+    command: "git",
+    args: ["status", "--porcelain=v1", "--untracked-files=all"],
+    cwd,
+  });
+  if (result.code !== 0) throw new Error(`git status failed: ${result.stderr.trim() || result.stdout.trim()}`);
+  return result.stdout.trimEnd().split("\n").filter(Boolean).map((line) => line.slice(3).split(" -> ").pop() ?? "");
 }
 
 function normalizeRelative(path: string): string {
@@ -142,14 +154,70 @@ async function findPlans(cwd: string, purpose: "exec" | "review" | "loop"): Prom
   return plans.sort();
 }
 
+function commandTokens(args: string): string[] {
+  return args.match(/"(?:\\.|[^"])*"|'(?:\\.|[^'])*'|\S+/g)?.map((token) => {
+    if ((token.startsWith('"') && token.endsWith('"')) || (token.startsWith("'") && token.endsWith("'"))) {
+      return token.slice(1, -1);
+    }
+    return token;
+  }) ?? [];
+}
+
+function parseCommandArgs(args: string): ParsedCommandArgs {
+  const tokens = commandTokens(args);
+  const positional: string[] = [];
+  const ids: string[] = [];
+  let auto = false;
+  let pipeline: string | undefined;
+  for (let index = 0; index < tokens.length; index++) {
+    const token = tokens[index];
+    if (token === "--auto") {
+      auto = true;
+      continue;
+    }
+    if (token === "--release") {
+      pipeline = tokens[++index];
+      if (!pipeline || pipeline.startsWith("--")) throw new Error("--release requires a pipeline name");
+      continue;
+    }
+    if (token.startsWith("--release=")) {
+      pipeline = token.slice("--release=".length);
+      if (!pipeline) throw new Error("--release requires a pipeline name");
+      continue;
+    }
+    if (token === "--id") {
+      const id = tokens[++index];
+      if (!id || id.startsWith("--")) throw new Error("--id requires a value");
+      ids.push(id);
+      continue;
+    }
+    if (token.startsWith("--id=")) {
+      const id = token.slice("--id=".length);
+      if (!id) throw new Error("--id requires a value");
+      ids.push(id);
+      continue;
+    }
+    positional.push(token);
+  }
+  if (ids.length && !pipeline) throw new Error("--id requires --release <pipeline>");
+  return {
+    auto,
+    requested: positional.join(" ").trim(),
+    release: pipeline ? { pipeline, ids } : undefined,
+  };
+}
+
 async function resolvePlan(
   args: string,
   ctx: ExtensionCommandContext,
   purpose: "exec" | "review" | "loop" = "exec",
-): Promise<{ path: string; auto: boolean }> {
-  const auto = /(?:^|\s)--auto(?:\s|$)/.test(args);
-  const requested = args.replace(/(?:^|\s)--auto(?=\s|$)/g, " ").trim();
-  if (requested) return { path: await resolveRequestedPlan(ctx.cwd, requested), auto };
+): Promise<{ path: string; auto: boolean; release?: ReleaseRequest }> {
+  const parsed = parseCommandArgs(args);
+  if (parsed.requested) return {
+    path: await resolveRequestedPlan(ctx.cwd, parsed.requested),
+    auto: parsed.auto,
+    release: parsed.release,
+  };
 
   const plans = await findPlans(ctx.cwd, purpose);
   if (!plans.length) throw new Error(purpose === "exec"
@@ -157,11 +225,11 @@ async function resolvePlan(
     : purpose === "review"
       ? "no executed plans awaiting review found in docs/plans/"
       : "no active plans found in docs/plans/");
-  if (plans.length === 1) return { path: plans[0], auto };
+  if (plans.length === 1) return { path: plans[0], auto: parsed.auto, release: parsed.release };
   const labels = plans.map((path) => relative(ctx.cwd, path));
   const selected = await ctx.ui.select("Select a Ralphex plan", labels);
   if (!selected) throw new Error("plan selection cancelled");
-  return { path: plans[labels.indexOf(selected)], auto };
+  return { path: plans[labels.indexOf(selected)], auto: parsed.auto, release: parsed.release };
 }
 
 function parseQuestion(text: string): string | undefined {
@@ -190,6 +258,7 @@ async function executePlan(
   options: WorkflowOptions = {},
 ): Promise<ExecResult> {
   const resolved = await resolvePlan(rawArgs, ctx);
+  if (resolved.release) throw new Error("--release is supported by /ralphex-review and /ralphex-loop, not /ralphex-exec");
   const progressName = options.progressName ?? "Ralphex exec";
   const { root, base } = await ensureExecPreflight(ctx, resolved.path);
   const original = await readPlan(resolved.path);
@@ -434,6 +503,92 @@ async function reviewPlan(
   }
 }
 
+type ReleaseFinalization = {
+  release: CdtReleaseResult;
+  releaseCommit?: string;
+  pushWarning?: string;
+  remainingChanges: string[];
+};
+
+function releaseCommitMessage(release: CdtReleaseResult): string {
+  const version = release.version?.replace(/\s+/g, " ").trim();
+  const ids = release.ids.length ? ` for ${release.ids.join(", ")}` : "";
+  return version ? `chore: release ${version}${ids}` : `chore: complete ${release.pipeline} release${ids}`;
+}
+
+async function commitAndPushReleaseChanges(root: string, release: CdtReleaseResult): Promise<ReleaseFinalization> {
+  const releasableChanges = (await dirtyPaths(root)).filter((path) => !normalizeRelative(path).startsWith(".cdt/"));
+  let releaseCommit: string | undefined;
+  if (releasableChanges.length) {
+    await git(root, ["add", "-A", "--", ...releasableChanges]);
+    releaseCommit = releaseCommitMessage(release);
+    await git(root, ["commit", "-m", releaseCommit]);
+  }
+
+  let pushWarning: string | undefined;
+  const branch = await git(root, ["branch", "--show-current"]);
+  if (!branch) {
+    pushWarning = "cannot push from detached HEAD";
+  } else {
+    const upstream = await runCommand({
+      command: "git",
+      args: ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+      cwd: root,
+    });
+    const pushArgs = upstream.code === 0 ? ["push"] : ["push", "-u", "origin", branch];
+    const pushed = await runCommand({ command: "git", args: pushArgs, cwd: root, timeoutMs: 120_000 });
+    if (pushed.code !== 0) pushWarning = pushed.stderr.trim() || pushed.stdout.trim() || "git push failed";
+  }
+  return { release, releaseCommit, pushWarning, remainingChanges: await dirtyPaths(root) };
+}
+
+async function runReleaseAndFinalize(
+  root: string,
+  request: ReleaseRequest,
+  ctx: ExtensionCommandContext,
+  progressName: string,
+): Promise<ReleaseFinalization> {
+  showProgress(ctx, `${progressName} · CDT`, `Preparing ${request.pipeline} release…`);
+  const release = await runCdtRelease({
+    cwd: root,
+    request,
+    onProgress: (message) => showProgress(ctx, `${progressName} · CDT`, message),
+  });
+  if (release.status !== "success") {
+    return { release, remainingChanges: await dirtyPaths(root) };
+  }
+  showProgress(ctx, `${progressName} · Git`, "Committing release changes and pushing…");
+  return commitAndPushReleaseChanges(root, release);
+}
+
+function formatReleaseSummary(result: ReleaseFinalization | undefined): string {
+  if (!result) return "";
+  const release = result.release;
+  const lines = [""];
+  if (release.status === "success") {
+    lines.push("✓ CDT release completed");
+  } else if (release.status === "running") {
+    lines.push("⚠ CDT release still running");
+  } else {
+    lines.push("⚠ CDT release failed");
+  }
+  lines.push(`Pipeline: ${release.pipeline}`);
+  if (release.ids.length) lines.push(`IDs: ${release.ids.join(", ")}`);
+  if (release.runId) lines.push(`Run ID: ${release.runId}`);
+  if (release.version) lines.push(`Version: ${release.version}`);
+  for (const artifact of release.artifacts) lines.push(`Artifact: ${artifact}`);
+  if (release.log) lines.push(`Log: ${release.log}`);
+  if (release.reason) lines.push(`Reason: ${release.reason}`);
+  if (result.releaseCommit) lines.push(`Release commit: ${result.releaseCommit}`);
+  if (result.pushWarning) lines.push(`⚠ Git push failed: ${result.pushWarning}`, "Retry: git push");
+  if (result.remainingChanges.length) lines.push(`Working tree: ${result.remainingChanges.join(", ")}`);
+  else if (release.status === "success") lines.push("Working tree: clean");
+  if (release.status === "running" && release.runId) {
+    lines.push(`Check: cdt agent-release status --run ${release.runId} --wait --json`);
+  }
+  return `\n${lines.join("\n")}`;
+}
+
 function loopArgs(auto: boolean, root: string, planPath: string): string {
   return `${auto ? "--auto " : ""}${relative(root, planPath)}`;
 }
@@ -460,6 +615,10 @@ async function runLoop(pi: ExtensionAPI, ctx: ExtensionCommandContext, rawArgs: 
       announceCompletion: false,
       progressName: "Ralphex loop",
     });
+    phase = "CDT release";
+    const releaseResult = resolved.release
+      ? await runReleaseAndFinalize(root, resolved.release, ctx, "Ralphex loop")
+      : undefined;
     const finalMarkdown = await readPlan(reviewResult.planPath);
     const tasks = parseTasks(finalMarkdown).length;
     const notes = executionNotes(finalMarkdown);
@@ -474,12 +633,34 @@ async function runLoop(pi: ExtensionAPI, ctx: ExtensionCommandContext, rawArgs: 
 
     pi.sendMessage({
       customType: "ralphex",
-      content: `✓ Ralphex loop completed\n\nTasks: ${tasks}\nTask commits this run: ${tasksCompleted}\n${detail}\nValidation: passed\nPlan: ${relative(root, reviewResult.planPath)}${noteSection}`,
+      content: `✓ Ralphex loop completed\n\nTasks: ${tasks}\nTask commits this run: ${tasksCompleted}\n${detail}\nValidation: passed\nPlan: ${relative(root, reviewResult.planPath)}${noteSection}${formatReleaseSummary(releaseResult)}`,
       display: true,
     });
   } catch (error) {
     throw new Error(`✗ Ralphex loop blocked\n\nPhase: ${phase}\nReason: ${errorText(error)}\nPlan: ${relative(root, resolved.path)}\n\nResume:\n${resume}`);
   }
+}
+
+async function runReviewCommand(
+  pi: ExtensionAPI,
+  ctx: ExtensionCommandContext,
+  rawArgs: string,
+): Promise<void> {
+  const parsed = parseCommandArgs(rawArgs);
+  if (!parsed.release) {
+    await reviewPlan(pi, ctx, rawArgs);
+    return;
+  }
+  const reviewResult = await reviewPlan(pi, ctx, rawArgs, {
+    announceCompletion: false,
+    progressName: "Ralphex review",
+  });
+  const releaseResult = await runReleaseAndFinalize(reviewResult.root, parsed.release, ctx, "Ralphex review");
+  pi.sendMessage({
+    customType: "ralphex",
+    content: `✓ Ralphex review completed\nClaude review passes: ${reviewResult.reviewPasses}\nPlan: ${relative(reviewResult.root, reviewResult.planPath)}${formatReleaseSummary(releaseResult)}`,
+    display: true,
+  });
 }
 
 async function commandBoundary(
@@ -510,14 +691,14 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerCommand("ralphex-review", {
-    description: "Run the autonomous Claude review and Pi fixer loop for a completed plan",
-    handler: async (args, ctx) => commandBoundary(pi, ctx, "Ralphex review", () => reviewPlan(pi, ctx, args)),
+    description: "Run autonomous Claude review; optionally add --release <pipeline> and repeatable --id values",
+    handler: async (args, ctx) => commandBoundary(pi, ctx, "Ralphex review", () => runReviewCommand(pi, ctx, args)),
   });
 
   pi.registerCommand("ralphex-loop", {
-    description: "Execute a plan and run Claude review as one resumable workflow; add --auto for unattended decisions",
+    description: "Execute and review a plan; supports --auto and optional --release <pipeline> with repeatable --id",
     handler: async (args, ctx) => commandBoundary(pi, ctx, "Ralphex loop", () => runLoop(pi, ctx, args)),
   });
 }
 
-export { commitCompletedPlanMove, executePlan, moveCompletedPlan, reviewPlan, resolvePlan, resolveRequestedPlan, runLoop };
+export { commitAndPushReleaseChanges, commitCompletedPlanMove, executePlan, moveCompletedPlan, parseCommandArgs, reviewPlan, resolvePlan, resolveRequestedPlan, runLoop };

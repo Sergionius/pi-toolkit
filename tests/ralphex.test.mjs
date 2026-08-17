@@ -30,6 +30,23 @@ const sample = `# Feature
 - no task checkbox
 `;
 
+test("ralphex release arguments support optional and repeated task IDs", () => {
+  assert.deepEqual(
+    ralphex.parseCommandArgs("--auto --release test --id BTL-123 --id=BTL-456 feature.md"),
+    {
+      auto: true,
+      requested: "feature.md",
+      release: { pipeline: "test", ids: ["BTL-123", "BTL-456"] },
+    },
+  );
+  assert.deepEqual(ralphex.parseCommandArgs("--release test feature.md"), {
+    auto: false,
+    requested: "feature.md",
+    release: { pipeline: "test", ids: [] },
+  });
+  assert.throws(() => ralphex.parseCommandArgs("--id BTL-123 feature.md"), /requires --release/);
+});
+
 test("ralphex commands resolve both full plan paths and bare filenames", async () => {
   const temporary = await mkdtemp(join(tmpdir(), "ralphex-resolve-"));
   try {
@@ -129,6 +146,73 @@ test("completed plan move recovers when the source deletion is already staged", 
     assert.equal(git("status", "--porcelain"), "");
     assert.equal(git("log", "-1", "--pretty=%s"), "move completed plan: feature.md");
     assert.equal(git("ls-files", "docs/plans/completed/feature.md"), "docs/plans/completed/feature.md");
+  } finally {
+    await rm(temporary, { recursive: true, force: true });
+  }
+});
+
+test("successful release changes are committed and pushed", async () => {
+  const temporary = await mkdtemp(join(tmpdir(), "ralphex-release-git-"));
+  const repository = join(temporary, "repo");
+  const remote = join(temporary, "origin.git");
+  await mkdir(repository);
+  const git = (...args) => execFileSync("git", args, { cwd: repository, encoding: "utf8" }).trim();
+  try {
+    execFileSync("git", ["init", "--bare", "-q", remote]);
+    git("init", "-q");
+    git("config", "user.email", "ralphex@example.test");
+    git("config", "user.name", "Ralphex Test");
+    git("branch", "-M", "feature/release");
+    await writeFile(join(repository, "pubspec.yaml"), "version: 1.0.0+1\n", "utf8");
+    git("add", "pubspec.yaml");
+    git("commit", "-qm", "initial");
+    git("remote", "add", "origin", remote);
+    git("push", "-qu", "origin", "feature/release");
+
+    await writeFile(join(repository, "pubspec.yaml"), "version: 1.0.0+2\n", "utf8");
+    const result = await ralphex.commitAndPushReleaseChanges(repository, {
+      status: "success",
+      pipeline: "test",
+      ids: ["BTL-42"],
+      version: "1.0.0+2",
+      artifacts: [],
+    });
+
+    assert.equal(result.releaseCommit, "chore: release 1.0.0+2 for BTL-42");
+    assert.equal(result.pushWarning, undefined);
+    assert.deepEqual(result.remainingChanges, []);
+    assert.equal(git("log", "-1", "--pretty=%s"), "chore: release 1.0.0+2 for BTL-42");
+    const remoteSubject = execFileSync("git", ["--git-dir", remote, "log", "feature/release", "-1", "--pretty=%s"], { encoding: "utf8" }).trim();
+    assert.equal(remoteSubject, "chore: release 1.0.0+2 for BTL-42");
+  } finally {
+    await rm(temporary, { recursive: true, force: true });
+  }
+});
+
+test("release push failure remains a completed local commit with warning", async () => {
+  const temporary = await mkdtemp(join(tmpdir(), "ralphex-release-push-failure-"));
+  const git = (...args) => execFileSync("git", args, { cwd: temporary, encoding: "utf8" }).trim();
+  try {
+    git("init", "-q");
+    git("config", "user.email", "ralphex@example.test");
+    git("config", "user.name", "Ralphex Test");
+    await writeFile(join(temporary, "pubspec.yaml"), "version: 1.0.0+1\n", "utf8");
+    git("add", "pubspec.yaml");
+    git("commit", "-qm", "initial");
+    await writeFile(join(temporary, "pubspec.yaml"), "version: 1.0.0+2\n", "utf8");
+
+    const result = await ralphex.commitAndPushReleaseChanges(temporary, {
+      status: "success",
+      pipeline: "test",
+      ids: [],
+      version: "1.0.0+2",
+      artifacts: [],
+    });
+
+    assert.equal(result.releaseCommit, "chore: release 1.0.0+2");
+    assert.match(result.pushWarning, /origin|repository|remote/i);
+    assert.deepEqual(result.remainingChanges, []);
+    assert.equal(git("log", "-1", "--pretty=%s"), "chore: release 1.0.0+2");
   } finally {
     await rm(temporary, { recursive: true, force: true });
   }
