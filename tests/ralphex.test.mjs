@@ -45,6 +45,35 @@ test("ralphex commands resolve both full plan paths and bare filenames", async (
   }
 });
 
+test("ralphex-loop discovers both incomplete and review-ready active plans", async () => {
+  const temporary = await mkdtemp(join(tmpdir(), "ralphex-loop-select-"));
+  try {
+    const plans = join(temporary, "docs", "plans");
+    await mkdir(plans, { recursive: true });
+    await writeFile(join(plans, "incomplete.md"), sample, "utf8");
+    const ready = planModule.ensureBaseCommit(sample.replaceAll("[ ]", "[x]"), "abcdef1234567890");
+    await writeFile(join(plans, "ready.md"), ready, "utf8");
+    const selections = [];
+    const ctx = {
+      cwd: temporary,
+      ui: {
+        select: async (_title, options) => {
+          selections.push(options);
+          return "docs/plans/ready.md";
+        },
+      },
+    };
+
+    const loopPlan = await ralphex.resolvePlan("", ctx, "loop");
+    assert.equal(loopPlan.path, join(plans, "ready.md"));
+    assert.deepEqual(selections[0], ["docs/plans/incomplete.md", "docs/plans/ready.md"]);
+    assert.equal((await ralphex.resolvePlan("", { ...ctx, ui: { select: async () => undefined } }, "exec")).path, join(plans, "incomplete.md"));
+    assert.equal((await ralphex.resolvePlan("", { ...ctx, ui: { select: async () => undefined } }, "review")).path, join(plans, "ready.md"));
+  } finally {
+    await rm(temporary, { recursive: true, force: true });
+  }
+});
+
 test("completed plan move force-adds plans ignored by the repository", async () => {
   const temporary = await mkdtemp(join(tmpdir(), "ralphex-move-"));
   const git = (...args) => execFileSync("git", args, { cwd: temporary, encoding: "utf8" }).trim();
@@ -126,6 +155,10 @@ test("execution notes are appended without introducing checkboxes", () => {
   assert.match(second, /## Execution Notes/);
   assert.match(second, /Task 1: chose the existing API/);
   assert.match(second, /Task 2: retained fallback/);
+  assert.deepEqual(planModule.executionNotes(second), [
+    "Task 1: chose the existing API",
+    "Task 2: retained fallback",
+  ]);
   assert.equal(planModule.parseTasks(second)[1].unchecked, 1);
 });
 

@@ -45,6 +45,19 @@ export function ensureBaseCommit(markdown: string, commit: string): string {
   return `<!-- ralphex-base: ${commit} -->\n\n${markdown}`;
 }
 
+export function executionNotes(markdown: string): string[] {
+  const lines = markdown.split("\n");
+  const start = lines.findIndex((line) => /^## Execution Notes\s*$/.test(line));
+  if (start < 0) return [];
+  const notes: string[] = [];
+  for (const line of lines.slice(start + 1)) {
+    if (/^##\s+/.test(line)) break;
+    const note = line.match(/^\s*-\s+(.+?)\s*$/)?.[1];
+    if (note) notes.push(note);
+  }
+  return notes;
+}
+
 export function appendExecutionNote(markdown: string, note: string): string {
   const clean = note.replace(/\s+/g, " ").trim();
   const line = `- ${clean}`;

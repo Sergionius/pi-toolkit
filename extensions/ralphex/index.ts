@@ -2,7 +2,7 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-c
 import { access, mkdir, readdir, rename } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { appendExecutionNote, baseCommit, ensureBaseCommit, firstIncompleteTask, parseTasks, readPlan, writePlan } from "./plan";
+import { appendExecutionNote, baseCommit, ensureBaseCommit, executionNotes, firstIncompleteTask, parseTasks, readPlan, writePlan } from "./plan";
 import { runCommand, runPiWorker } from "./process";
 import { claudeReviewPrompt, fixerPrompt, parseClaudeReview, taskPrompt, type ClaudeFinding } from "./prompts";
 
@@ -11,6 +11,26 @@ const CLAUDE_WRAPPER = join(PACKAGE_ROOT, "skills", "ask-claude", "scripts", "as
 const QUESTION_PATTERN = /<<<RALPHEX:QUESTION>>>\s*\n?([\s\S]*?)\n?<<<RALPHEX:END>>>/;
 const TASK_RETRIES = 1;
 const REVIEW_FIX_ITERATIONS = 3;
+
+type WorkflowOptions = {
+  announceCompletion?: boolean;
+  progressName?: string;
+};
+
+type ExecResult = {
+  root: string;
+  planPath: string;
+  tasksCompleted: number;
+};
+
+type ReviewResult = {
+  root: string;
+  planPath: string;
+  reviewPasses: number;
+  fixCommits: number;
+  alreadyCompleted?: boolean;
+  recoveredMove?: boolean;
+};
 
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -98,7 +118,7 @@ async function ensureExecPreflight(ctx: ExtensionCommandContext, planPath: strin
   return { root, base: baseCommit(markdown) ?? await head(root) };
 }
 
-async function findPlans(cwd: string, purpose: "exec" | "review"): Promise<string[]> {
+async function findPlans(cwd: string, purpose: "exec" | "review" | "loop"): Promise<string[]> {
   const directory = join(cwd, "docs", "plans");
   let entries;
   try {
@@ -114,7 +134,9 @@ async function findPlans(cwd: string, purpose: "exec" | "review"): Promise<strin
     const tasks = parseTasks(markdown);
     const eligible = purpose === "exec"
       ? Boolean(firstIncompleteTask(markdown))
-      : tasks.length > 0 && !firstIncompleteTask(markdown) && Boolean(baseCommit(markdown));
+      : purpose === "review"
+        ? tasks.length > 0 && !firstIncompleteTask(markdown) && Boolean(baseCommit(markdown))
+        : tasks.length > 0;
     if (eligible) plans.push(path);
   }
   return plans.sort();
@@ -123,7 +145,7 @@ async function findPlans(cwd: string, purpose: "exec" | "review"): Promise<strin
 async function resolvePlan(
   args: string,
   ctx: ExtensionCommandContext,
-  purpose: "exec" | "review" = "exec",
+  purpose: "exec" | "review" | "loop" = "exec",
 ): Promise<{ path: string; auto: boolean }> {
   const auto = /(?:^|\s)--auto(?:\s|$)/.test(args);
   const requested = args.replace(/(?:^|\s)--auto(?=\s|$)/g, " ").trim();
@@ -132,7 +154,9 @@ async function resolvePlan(
   const plans = await findPlans(ctx.cwd, purpose);
   if (!plans.length) throw new Error(purpose === "exec"
     ? "no incomplete plans found in docs/plans/"
-    : "no executed plans awaiting review found in docs/plans/");
+    : purpose === "review"
+      ? "no executed plans awaiting review found in docs/plans/"
+      : "no active plans found in docs/plans/");
   if (plans.length === 1) return { path: plans[0], auto };
   const labels = plans.map((path) => relative(ctx.cwd, path));
   const selected = await ctx.ui.select("Select a Ralphex plan", labels);
@@ -159,8 +183,14 @@ function workerModel(ctx: ExtensionCommandContext): string | undefined {
   return ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined;
 }
 
-async function executePlan(pi: ExtensionAPI, ctx: ExtensionCommandContext, rawArgs: string): Promise<void> {
+async function executePlan(
+  pi: ExtensionAPI,
+  ctx: ExtensionCommandContext,
+  rawArgs: string,
+  options: WorkflowOptions = {},
+): Promise<ExecResult> {
   const resolved = await resolvePlan(rawArgs, ctx);
+  const progressName = options.progressName ?? "Ralphex exec";
   const { root, base } = await ensureExecPreflight(ctx, resolved.path);
   const original = await readPlan(resolved.path);
   if (!firstIncompleteTask(original)) throw new Error("plan has no incomplete Task checkboxes");
@@ -174,7 +204,7 @@ async function executePlan(pi: ExtensionAPI, ctx: ExtensionCommandContext, rawAr
     if (!task) break;
 
     ctx.ui.notify(`Task ${task.number}: ${task.title}`, "info");
-    showProgress(ctx, `Ralphex exec · Task ${task.number}: ${task.title}`, "Starting fresh Pi worker…");
+    showProgress(ctx, `${progressName} · Task ${task.number}: ${task.title}`, "Starting fresh Pi worker…");
     let retryContext: string | undefined;
     let failures = 0;
     let taskDone = false;
@@ -186,8 +216,8 @@ async function executePlan(pi: ExtensionAPI, ctx: ExtensionCommandContext, rawAr
         prompt: taskPrompt({ planPath: relative(root, resolved.path), task, auto: resolved.auto, retryContext }),
         model: workerModel(ctx),
         thinking: ctx.thinkingLevel,
-        onText: (text) => showProgress(ctx, `Ralphex exec · Task ${task.number}: ${task.title}`, text),
-        onActivity: (text) => showProgress(ctx, `Ralphex exec · Task ${task.number}: ${task.title}`, text),
+        onText: (text) => showProgress(ctx, `${progressName} · Task ${task.number}: ${task.title}`, text),
+        onActivity: (text) => showProgress(ctx, `${progressName} · Task ${task.number}: ${task.title}`, text),
       });
       ctx.ui.setWidget("ralphex", undefined);
 
@@ -223,11 +253,14 @@ async function executePlan(pi: ExtensionAPI, ctx: ExtensionCommandContext, rawAr
     }
   }
 
-  pi.sendMessage({
-    customType: "ralphex",
-    content: `✓ Ralphex exec completed\nTasks: ${completed}\nPlan: ${relative(root, resolved.path)}\nNext: /ralphex-review ${relative(root, resolved.path)}`,
-    display: true,
-  });
+  if (options.announceCompletion !== false) {
+    pi.sendMessage({
+      customType: "ralphex",
+      content: `✓ Ralphex exec completed\nTasks: ${completed}\nPlan: ${relative(root, resolved.path)}\nNext: /ralphex-review ${relative(root, resolved.path)}`,
+      display: true,
+    });
+  }
+  return { root, planPath: resolved.path, tasksCompleted: completed };
 }
 
 async function runClaudeReview(root: string, planPath: string, base: string, previousContext: string): Promise<ReturnType<typeof parseClaudeReview>> {
@@ -261,15 +294,16 @@ async function runFixer(
   findings: ClaudeFinding[],
   ctx: ExtensionCommandContext,
   finalCriticalOnly = false,
-): Promise<string> {
+  progressName = "Ralphex review",
+): Promise<{ output: string; committed: boolean }> {
   const before = await head(root);
   const result = await runPiWorker({
     cwd: root,
     prompt: fixerPrompt({ planPath: relative(root, planPath), findings, finalCriticalOnly }),
     model: workerModel(ctx),
     thinking: ctx.thinkingLevel,
-    onText: (text) => showProgress(ctx, "Ralphex review · Pi fixer", text),
-    onActivity: (text) => showProgress(ctx, "Ralphex review · Pi fixer", text),
+    onText: (text) => showProgress(ctx, `${progressName} · Pi fixer`, text),
+    onActivity: (text) => showProgress(ctx, `${progressName} · Pi fixer`, text),
   });
   ctx.ui.setWidget("ralphex", undefined);
   if (result.code !== 0 || result.assistantText.includes("<<<RALPHEX:FIX_FAILED>>>") || (await dirtyPaths(root)).length) {
@@ -278,7 +312,7 @@ async function runFixer(
   const after = await head(root);
   const noFixes = result.assistantText.includes("<<<RALPHEX:NO_FIXES>>>");
   if (!noFixes && after === before) throw new Error("review fixer reported completion without creating a commit");
-  return result.assistantText;
+  return { output: result.assistantText, committed: after !== before };
 }
 
 async function commitCompletedPlanMove(root: string, source: string, target: string): Promise<void> {
@@ -312,9 +346,15 @@ async function moveCompletedPlan(root: string, planPath: string): Promise<string
   return target;
 }
 
-async function reviewPlan(pi: ExtensionAPI, ctx: ExtensionCommandContext, rawArgs: string): Promise<void> {
+async function reviewPlan(
+  pi: ExtensionAPI,
+  ctx: ExtensionCommandContext,
+  rawArgs: string,
+  options: WorkflowOptions = {},
+): Promise<ReviewResult> {
   const resolved = await resolvePlan(rawArgs, ctx, "review");
   const root = await repositoryRoot(ctx.cwd);
+  const progressName = options.progressName ?? "Ralphex review";
   const dirty = await dirtyPaths(root);
   if (basename(dirname(resolved.path)) === "completed") {
     const source = join(dirname(dirname(resolved.path)), basename(resolved.path));
@@ -324,16 +364,20 @@ async function reviewPlan(pi: ExtensionAPI, ctx: ExtensionCommandContext, rawArg
     ]);
     if (dirty.length && dirty.every((path) => movePaths.has(normalizeRelative(path)))) {
       await commitCompletedPlanMove(root, source, resolved.path);
-      pi.sendMessage({
-        customType: "ralphex",
-        content: `✓ Ralphex review completed\nRecovered the interrupted completed-plan commit.\nPlan: ${relative(root, resolved.path)}`,
-        display: true,
-      });
-      return;
+      if (options.announceCompletion !== false) {
+        pi.sendMessage({
+          customType: "ralphex",
+          content: `✓ Ralphex review completed\nRecovered the interrupted completed-plan commit.\nPlan: ${relative(root, resolved.path)}`,
+          display: true,
+        });
+      }
+      return { root, planPath: resolved.path, reviewPasses: 0, fixCommits: 0, recoveredMove: true };
     }
     if (!dirty.length) {
-      pi.sendMessage({ customType: "ralphex", content: `✓ Ralphex review already completed\nPlan: ${relative(root, resolved.path)}`, display: true });
-      return;
+      if (options.announceCompletion !== false) {
+        pi.sendMessage({ customType: "ralphex", content: `✓ Ralphex review already completed\nPlan: ${relative(root, resolved.path)}`, display: true });
+      }
+      return { root, planPath: resolved.path, reviewPasses: 0, fixCommits: 0, alreadyCompleted: true };
     }
   }
   if (dirty.length) throw new Error("ralphex-review requires a clean worktree");
@@ -346,29 +390,33 @@ async function reviewPlan(pi: ExtensionAPI, ctx: ExtensionCommandContext, rawArg
   let normalFixes = 0;
   let finalFixUsed = false;
   let reviewNumber = 0;
+  let fixCommits = 0;
 
   while (true) {
     reviewNumber++;
     ctx.ui.notify(`Claude review ${reviewNumber}`, "info");
-    showProgress(ctx, `Ralphex review · Claude pass ${reviewNumber}`, "Read-only review in progress…");
+    showProgress(ctx, `${progressName} · Claude pass ${reviewNumber}`, "Read-only review in progress…");
     const review = await runClaudeReview(root, resolved.path, base, previousContext);
-    showProgress(ctx, `Ralphex review · Claude pass ${reviewNumber}`, `${review.findings.length} finding(s): ${review.summary}`);
+    showProgress(ctx, `${progressName} · Claude pass ${reviewNumber}`, `${review.findings.length} finding(s): ${review.summary}`);
     if (review.verdict === "approve" && review.findings.length === 0) {
       const completedPath = await moveCompletedPlan(root, resolved.path);
-      pi.sendMessage({
-        customType: "ralphex",
-        content: `✓ Ralphex review completed\nClaude review passes: ${reviewNumber}\nPlan: ${relative(root, completedPath)}`,
-        display: true,
-      });
-      return;
+      if (options.announceCompletion !== false) {
+        pi.sendMessage({
+          customType: "ralphex",
+          content: `✓ Ralphex review completed\nClaude review passes: ${reviewNumber}\nPlan: ${relative(root, completedPath)}`,
+          display: true,
+        });
+      }
+      return { root, planPath: completedPath, reviewPasses: reviewNumber, fixCommits };
     }
 
     const reviewJson = JSON.stringify(review, null, 2);
     if (normalFixes < REVIEW_FIX_ITERATIONS) {
       normalFixes++;
       ctx.ui.notify(`Applying confirmed Claude findings (${normalFixes}/${REVIEW_FIX_ITERATIONS})`, "info");
-      const fixerResult = await runFixer(root, resolved.path, review.findings, ctx);
-      previousContext += `\nClaude review ${reviewNumber}:\n${reviewJson}\nPi fixer:\n${fixerResult}\n`;
+      const fixerResult = await runFixer(root, resolved.path, review.findings, ctx, false, progressName);
+      if (fixerResult.committed) fixCommits++;
+      previousContext += `\nClaude review ${reviewNumber}:\n${reviewJson}\nPi fixer:\n${fixerResult.output}\n`;
       continue;
     }
 
@@ -376,12 +424,61 @@ async function reviewPlan(pi: ExtensionAPI, ctx: ExtensionCommandContext, rawArg
     if (!finalFixUsed && blocking.length) {
       finalFixUsed = true;
       ctx.ui.notify("Applying final critical/high review fixes", "warning");
-      const fixerResult = await runFixer(root, resolved.path, blocking, ctx, true);
-      previousContext += `\nFinal blocking review:\n${reviewJson}\nPi fixer:\n${fixerResult}\n`;
+      const fixerResult = await runFixer(root, resolved.path, blocking, ctx, true, progressName);
+      if (fixerResult.committed) fixCommits++;
+      previousContext += `\nFinal blocking review:\n${reviewJson}\nPi fixer:\n${fixerResult.output}\n`;
       continue;
     }
 
     throw new Error(`Claude review did not converge. Remaining findings:\n${review.findings.map((finding) => `- [${finding.severity}] ${finding.title}`).join("\n")}`);
+  }
+}
+
+function loopArgs(auto: boolean, root: string, planPath: string): string {
+  return `${auto ? "--auto " : ""}${relative(root, planPath)}`;
+}
+
+async function runLoop(pi: ExtensionAPI, ctx: ExtensionCommandContext, rawArgs: string): Promise<void> {
+  const resolved = await resolvePlan(rawArgs, ctx, "loop");
+  const root = await repositoryRoot(ctx.cwd);
+  const resume = `/ralphex-loop${resolved.auto ? " --auto" : ""} ${basename(resolved.path)}`;
+  let phase = "execution";
+  let tasksCompleted = 0;
+
+  try {
+    const initial = await readPlan(resolved.path);
+    if (firstIncompleteTask(initial)) {
+      const execResult = await executePlan(pi, ctx, loopArgs(resolved.auto, root, resolved.path), {
+        announceCompletion: false,
+        progressName: "Ralphex loop",
+      });
+      tasksCompleted = execResult.tasksCompleted;
+    }
+
+    phase = "Claude review";
+    const reviewResult = await reviewPlan(pi, ctx, relative(root, resolved.path), {
+      announceCompletion: false,
+      progressName: "Ralphex loop",
+    });
+    const finalMarkdown = await readPlan(reviewResult.planPath);
+    const tasks = parseTasks(finalMarkdown).length;
+    const notes = executionNotes(finalMarkdown);
+    const noteSection = notes.length
+      ? `\n\n${resolved.auto ? "Autonomous decisions" : "Execution notes"}:\n${notes.map((note) => `- ${note}`).join("\n")}`
+      : "";
+    const detail = reviewResult.alreadyCompleted
+      ? "Already completed"
+      : reviewResult.recoveredMove
+        ? "Recovered interrupted plan completion"
+        : `Claude review passes: ${reviewResult.reviewPasses}\nReview fix commits: ${reviewResult.fixCommits}`;
+
+    pi.sendMessage({
+      customType: "ralphex",
+      content: `✓ Ralphex loop completed\n\nTasks: ${tasks}\nTask commits this run: ${tasksCompleted}\n${detail}\nValidation: passed\nPlan: ${relative(root, reviewResult.planPath)}${noteSection}`,
+      display: true,
+    });
+  } catch (error) {
+    throw new Error(`✗ Ralphex loop blocked\n\nPhase: ${phase}\nReason: ${errorText(error)}\nPlan: ${relative(root, resolved.path)}\n\nResume:\n${resume}`);
   }
 }
 
@@ -416,6 +513,11 @@ export default function (pi: ExtensionAPI) {
     description: "Run the autonomous Claude review and Pi fixer loop for a completed plan",
     handler: async (args, ctx) => commandBoundary(pi, ctx, "Ralphex review", () => reviewPlan(pi, ctx, args)),
   });
+
+  pi.registerCommand("ralphex-loop", {
+    description: "Execute a plan and run Claude review as one resumable workflow; add --auto for unattended decisions",
+    handler: async (args, ctx) => commandBoundary(pi, ctx, "Ralphex loop", () => runLoop(pi, ctx, args)),
+  });
 }
 
-export { commitCompletedPlanMove, executePlan, moveCompletedPlan, reviewPlan, resolvePlan, resolveRequestedPlan };
+export { commitCompletedPlanMove, executePlan, moveCompletedPlan, reviewPlan, resolvePlan, resolveRequestedPlan, runLoop };

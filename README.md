@@ -118,7 +118,16 @@ The first execution stores the pre-task HEAD in an invisible `ralphex-base` comm
 
 Review is autonomous: the existing read-only `ask-claude` wrapper reviews the complete diff, a fresh Pi fixer validates every finding and fixes confirmed issues, and Claude reviews again. All severities are considered. There are three normal fix iterations and one final critical/high-only attempt. Fix iterations commit as `fix: address code review findings`. On approval, the plan moves to `docs/plans/completed/` in a `move completed plan: <filename>` commit.
 
-`/ralphex-review` inherits `ASK_CLAUDE_MODEL` and `ASK_CLAUDE_EFFORT` behavior from the existing wrapper. Neither command creates or switches branches, rebases, pushes, or merges. A future `/ralphex-loop` will compose execution and review after both commands have been tested independently.
+`/ralphex-review` inherits `ASK_CLAUDE_MODEL` and `ASK_CLAUDE_EFFORT` behavior from the existing wrapper. Neither command creates or switches branches, rebases, pushes, or merges.
+
+Run both phases as one resumable workflow with:
+
+```text
+/ralphex-loop YYYYMMDD-feature.md
+/ralphex-loop --auto YYYYMMDD-feature.md
+```
+
+The loop resumes from plan state: it executes remaining Task sections, or skips directly to review when all tasks are checked. With no argument it selects active plans from `docs/plans/`. Internal exec/review completion messages are suppressed; the loop emits one final report, completion sound, and green agterm status only after the whole workflow succeeds. A failure stops the current phase, marks agterm blocked, preserves the working state, and reports the exact resume command. The final report includes task/review counts, validation status, completed plan path, and recorded Execution Notes when present.
 
 ## Ask Claude
 

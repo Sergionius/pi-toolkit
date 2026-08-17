@@ -84,6 +84,7 @@ test("all extension entry points load and register expected commands once", asyn
     "ralphex-plan",
     "ralphex-exec",
     "ralphex-review",
+    "ralphex-loop",
     "goal-plan",
     "codex-status",
     "codex-account-save",
