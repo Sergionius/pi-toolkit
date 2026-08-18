@@ -27,6 +27,10 @@ case "${MOCK_CLAUDE_MODE:-success}" in
     echo 'fixture CLI failure' >&2
     exit 42
     ;;
+  failure_json)
+    printf '%s\n' '{"is_error":true,"result":"usage limit reached"}'
+    exit 1
+    ;;
   *)
     exit 99
     ;;
@@ -87,6 +91,13 @@ code=$?
 set -e
 [[ $code -eq 42 ]]
 grep -q 'fixture CLI failure' <<<"$output"
+
+set +e
+output="$(printf '%s' 'limited request' | PATH="$TEMP/bin:$PATH" MOCK_CLAUDE_MODE=failure_json "$WRAPPER" 2>&1)"
+code=$?
+set -e
+[[ $code -eq 1 ]]
+grep -q 'usage limit reached' <<<"$output"
 
 set +e
 output="$(printf '   ' | PATH="$TEMP/bin:$PATH" "$WRAPPER" 2>&1)"

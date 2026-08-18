@@ -34,6 +34,21 @@ set -e
 
 if [[ $code -ne 0 ]]; then
   details="$(head -c 4000 "$stderr_file")"
+  if [[ -z "$details" && -s "$stdout_file" ]]; then
+    details="$(python3 - "$stdout_file" <<'PY'
+import json
+import sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as handle:
+        payload = json.load(handle)
+    print(payload.get("result") or payload.get("error") or str(payload))
+except Exception:
+    with open(sys.argv[1], encoding="utf-8", errors="replace") as handle:
+        print(handle.read(4000))
+PY
+)"
+  fi
   if [[ -n "$details" ]]; then
     printf 'ask-claude: Claude Code exited with status %s: %s\n' "$code" "$details" >&2
   else
