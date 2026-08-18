@@ -252,6 +252,9 @@ test("task prompt enforces one task, validation, commit, and mode-specific ambig
   assert.match(interactive, /execute exactly Task 1/);
   assert.match(interactive, /Do not execute any other Task section/);
   assert.match(interactive, /compile, analyze, typecheck, or build/);
+  assert.match(interactive, /documentation-only task/);
+  assert.match(interactive, /pre-existing issues outside this task/);
+  assert.match(interactive, /non-regression pass/);
   assert.match(interactive, /feat: <task summary>/);
   assert.match(interactive, /<<<RALPHEX:QUESTION>>>/);
 

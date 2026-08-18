@@ -21,11 +21,13 @@ Read the entire plan first, including Goal, Context, Scope, Validation, Acceptan
 4. Format changed files using the project's existing formatter when applicable.
 5. Validate before committing:
    - Run the commands explicitly listed in the plan when applicable to this task.
-   - If the plan has no usable validation command, identify and run the project's cheapest existing non-destructive compile, analyze, typecheck, or build command.
+   - For a documentation-only task, validate the document against the referenced source; do not run compile, typecheck, test, or build commands unless the plan explicitly requires them for that individual task.
+   - Otherwise, if the plan has no usable validation command, identify and run the project's cheapest existing non-destructive compile, analyze, typecheck, or build command.
    - Do not invent test infrastructure or run tests unless the plan explicitly asks for them.
-   - If validation fails, fix the failure and rerun it.
-   - If validation cannot run because the environment, SDK, credentials, or dependencies are unavailable, do not commit and report failure.
-6. Only after successful validation, mark all completed checkboxes in Task ${options.task.number} as [x].
+   - Fix and rerun failures introduced by this task. Do not fix unrelated pre-existing failures.
+   - If a validation command fails only because of pre-existing issues outside this task, establish that this task did not add or worsen them by comparing diagnostics with the base commit or otherwise inspecting the affected paths. Record the command and concise non-regression evidence under ## Execution Notes, then treat that command as a non-regression pass.
+   - If an applicable validation cannot run because the environment, SDK, credentials, or dependencies are unavailable, or you cannot distinguish its failure from a regression introduced by this task, do not commit and report failure.
+6. Only after applicable validation passes or pre-existing failures are proven unchanged, mark all completed checkboxes in Task ${options.task.number} as [x].
 7. Commit all changes for this task, including the updated plan, with a concise message in the form feat: <task summary>. Do not amend an earlier commit and do not push.
 8. Stop immediately after that commit. Do not continue to another Task.
 
@@ -133,7 +135,7 @@ For each finding:
 - do not add tests unless the plan explicitly requires them;
 - append material implementation decisions under ## Execution Notes when committing fixes; keep rejected-finding reasons in the final report so an all-false-positive pass leaves the worktree clean.
 
-After fixes, run the plan's applicable Validation commands. If none are usable, run the project's cheapest existing non-destructive compile, analyze, typecheck, or build command. If validation fails or cannot run, do not commit and output <<<RALPHEX:FIX_FAILED>>>.
+After fixes, run the plan's applicable Validation commands. If none are usable, run the project's cheapest existing non-destructive compile, analyze, typecheck, or build command. Fix failures introduced by your changes, but do not fix unrelated pre-existing failures. A command that fails only for diagnostics proven unchanged from the base implementation is an acceptable non-regression result; record the command and evidence under ## Execution Notes. If an applicable validation cannot run or its failure cannot be distinguished from a regression, do not commit and output <<<RALPHEX:FIX_FAILED>>>.
 
 If at least one finding was fixed and validation passed, commit all fixes and the updated plan with exactly:
 fix: address code review findings
