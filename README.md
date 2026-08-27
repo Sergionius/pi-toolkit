@@ -10,6 +10,7 @@ Private personal [Pi](https://pi.dev) package containing reusable extensions, sk
 - `agterm-status.ts` — pane-aware agterm lifecycle status integration with persistent completion indicators.
 - `codex-status.ts` — Codex usage and reset-credit commands.
 - `codex-accounts.ts` — local multi-account manager for OpenAI/Codex OAuth profiles.
+- `provider-switch.ts` — confirmed default-provider switching between Codex and Kimi with remembered models.
 - `figma-context.ts` — `figma_get_screen_context` tool.
 - `flutter-refresh.ts` — automatic Flutter reload/restart after successful edits.
 - `notify-sound.ts` — completion sound without routine visual noise.
@@ -209,6 +210,26 @@ chmod 600 "${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/auth.json"
 ```
 
 Restart Pi after recovery. Profile names may contain only letters, digits, `_`, and `-`.
+
+## Codex and Kimi provider switching
+
+Configure the built-in Kimi For Coding provider once and choose API-key authentication:
+
+```text
+/login kimi-coding
+```
+
+Then switch the default provider with:
+
+```text
+/provider-switch
+/provider-switch codex
+/provider-switch kimi
+```
+
+Without an argument, the command toggles between Codex and Kimi. It remembers the last model used for each provider, asks before changing `settings.json`, and exits only after confirmation. Resume the session with `pi -c`.
+
+Provider/model state is stored without credentials in `${PI_CODING_AGENT_DIR:-~/.pi/agent}/provider-switch.json`. The latest pre-switch settings backup is `settings.json.provider-switch.bak`. Use `/codex-account-switch` separately when changing the active Codex OAuth account.
 
 ## agterm status
 
