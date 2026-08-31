@@ -1,6 +1,6 @@
 # pi-toolkit
 
-Private personal [Pi](https://pi.dev) package containing reusable extensions, skills, and the VS Code bridge used by the Flutter auto-refresh workflow.
+Private personal [Pi](https://pi.dev) package containing reusable extensions, prompt templates, skills, and the VS Code bridge used by the Flutter auto-refresh workflow.
 
 ## Included
 
@@ -15,6 +15,10 @@ Private personal [Pi](https://pi.dev) package containing reusable extensions, sk
 - `flutter-refresh.ts` — automatic Flutter reload/restart after successful edits.
 - `notify-sound.ts` — completion sound without routine visual noise.
 - `toolkit.ts` — toolkit diagnostics and VS Code bridge synchronization.
+
+### Prompt templates
+
+- `/auto <task>` — execute a task autonomously without questions and report every material decision made without user approval.
 
 ### Skills
 
@@ -81,6 +85,18 @@ Features are enabled by environment variables; values are never stored in this r
 - `ASK_CLAUDE_EFFORT` — Claude reasoning effort, default `high`.
 
 `config/settings.example.json` contains sanitized defaults. It is documentation only and is never copied over the active Pi settings automatically.
+
+## Autonomous execution
+
+Run a task end-to-end without clarification or confirmation prompts:
+
+```text
+/auto fix the failing tests and verify the build
+```
+
+The agent investigates the project, resolves ambiguity using safe and reversible choices, performs the work, and runs available validation. It does not perform destructive or irreversible actions unless they were explicitly requested in the original task. The final report lists the result, checks, assumptions, limitations, and all material decisions made without consulting the user.
+
+Invoking `/auto` without a task makes no changes and reports the missing task instead of asking for input.
 
 ## Ralphex plan
 

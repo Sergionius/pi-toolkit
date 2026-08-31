@@ -102,6 +102,20 @@ test("all extension entry points load and register expected commands once", asyn
   assert.equal(new Set(pi.commands).size, pi.commands.length, "no duplicate commands are allowed inside pi-toolkit");
 });
 
+test("auto prompt is bundled with autonomous execution and reporting safeguards", async () => {
+  const manifest = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
+  const prompt = await readFile(join(root, "prompts", "auto.md"), "utf8");
+
+  assert.deepEqual(manifest.pi.prompts, ["./prompts"]);
+  assert.match(prompt, /^---\ndescription: .+\nargument-hint: "<задача>"\n---/);
+  assert.match(prompt, /\$ARGUMENTS/);
+  assert.match(prompt, /Не задавай пользователю вопросов/);
+  assert.match(prompt, /Не используй инструменты запроса пользовательского ввода/);
+  assert.match(prompt, /необратимые или опасные действия/i);
+  assert.match(prompt, /\*\*Автономные решения\*\*/);
+  assert.match(prompt, /почему выбрал именно этот вариант/);
+});
+
 test("ralphex-plan starts an isolated planning workflow from command arguments", async () => {
   const pi = fakePi();
   const imported = await jiti.import(join(root, "extensions", "plan", "index.ts"));
