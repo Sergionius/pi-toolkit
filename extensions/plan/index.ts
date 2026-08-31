@@ -1,4 +1,6 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join, relative } from "node:path";
 import { Type } from "typebox";
 import {
   currentPlanMode,
@@ -143,6 +145,58 @@ export function buildRalphexPlanPrompt(request: string) {
   return `${RALPHEX_PLAN_INSTRUCTIONS}\n\n## User request\n\n${request.trim()}`;
 }
 
+export const PLAN_COMPLETION_CHOICES = [
+  "Yes, implement this plan",
+  "No, save plan in file",
+  "No, rewrite plan in ralphex mode",
+  "No, stay in Plan mode",
+] as const;
+
+const CYRILLIC_TO_ASCII: Record<string, string> = {
+  а: "a", б: "b", в: "v", г: "g", д: "d", е: "e", ё: "e", ж: "zh", з: "z", и: "i", й: "y",
+  к: "k", л: "l", м: "m", н: "n", о: "o", п: "p", р: "r", с: "s", т: "t", у: "u", ф: "f",
+  х: "h", ц: "ts", ч: "ch", ш: "sh", щ: "sch", ъ: "", ы: "y", ь: "", э: "e", ю: "yu", я: "ya",
+};
+
+export function planSlug(plan: string): string {
+  const title = plan.match(/^#\s+(.+)$/m)?.[1]?.trim() ?? "plan";
+  const transliterated = [...title.toLowerCase()].map((character) => CYRILLIC_TO_ASCII[character] ?? character).join("");
+  return transliterated
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80)
+    .replace(/-+$/g, "") || "plan";
+}
+
+function localDateStamp(date: Date): string {
+  return [date.getFullYear(), date.getMonth() + 1, date.getDate()]
+    .map((part, index) => index === 0 ? String(part) : String(part).padStart(2, "0"))
+    .join("");
+}
+
+export async function saveProposedPlan(cwd: string, plan: string, date = new Date()): Promise<string> {
+  const directory = join(cwd, "docs", "plans");
+  const stem = `${localDateStamp(date)}-${planSlug(plan)}`;
+  await mkdir(directory, { recursive: true });
+
+  for (let suffix = 1; ; suffix += 1) {
+    const filename = `${stem}${suffix === 1 ? "" : `-${suffix}`}.md`;
+    const path = join(directory, filename);
+    try {
+      await writeFile(path, `${plan.trim()}\n`, { encoding: "utf8", flag: "wx" });
+      return path;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    }
+  }
+}
+
+export function buildRalphexRewritePrompt(plan: string): string {
+  return buildRalphexPlanPrompt(`Rewrite the following Codex Plan Mode draft into an accepted Ralphex implementation plan. Treat the draft as source material, verify it against the repository, resolve any remaining ambiguity conversationally, and do not implement it.\n\n## Existing draft\n\n${plan.trim()}`);
+}
+
 async function sendPrompt(pi: ExtensionAPI, ctx: ExtensionCommandContext | any, prompt: string) {
   if (typeof ctx.waitForIdle === "function") await ctx.waitForIdle();
   if (typeof ctx.isIdle === "function" && !ctx.isIdle()) {
@@ -221,10 +275,27 @@ export default function (pi: ExtensionAPI) {
     if (!planMode?.active || !proposedPlan || !ctx.hasUI) return;
 
     rememberProposedPlan(ctx, proposedPlan);
-    const choice = await ctx.ui.select("Implement this plan?", ["Yes, implement this plan", "No, stay in Plan mode"]);
-    if (choice !== "Yes, implement this plan") return;
-
-    await implementApprovedPlan(pi, ctx as ExtensionCommandContext);
+    const choice = await ctx.ui.select("Implement this plan?", [...PLAN_COMPLETION_CHOICES]);
+    if (choice === "Yes, implement this plan") {
+      await implementApprovedPlan(pi, ctx as ExtensionCommandContext);
+      return;
+    }
+    if (choice === "No, save plan in file") {
+      setPlanMode(ctx, false);
+      try {
+        const path = await saveProposedPlan(ctx.cwd, proposedPlan);
+        ctx.ui.notify(`Plan saved to ${relative(ctx.cwd, path)}`, "info");
+      } catch (error) {
+        setPlanMode(ctx, true);
+        ctx.ui.notify(`Failed to save plan: ${error instanceof Error ? error.message : String(error)}`, "error");
+      }
+      return;
+    }
+    if (choice === "No, rewrite plan in ralphex mode") {
+      setPlanMode(ctx, false);
+      ctx.ui.notify("Leaving Plan mode; rewriting draft in Ralphex mode", "info");
+      await sendPrompt(pi, ctx as ExtensionCommandContext, buildRalphexRewritePrompt(proposedPlan));
+    }
   });
 
   pi.on("input", async (event, ctx) => {
