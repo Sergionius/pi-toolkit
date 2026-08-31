@@ -16,10 +16,18 @@ Read the entire plan first, including Goal, Context, Scope, Validation, Acceptan
 ## Required workflow
 
 1. Inspect the relevant project files and conventions yourself. Do not launch subagents.
-2. Complete every unchecked item in Task ${options.task.number}.
+2. Complete every unchecked item in Task ${options.task.number}. Immediately before starting each unchecked item, output this progress envelope as a separate assistant message, with its 1-based position among all checkboxes in this Task, the total checkbox count, and the checkbox text:
+<<<RALPHEX:PROGRESS>>>
+{"stage":"checkbox","index":1,"total":3,"text":"concise checkbox text"}
+<<<RALPHEX:END>>>
+Do not wait for the item to finish before emitting its progress envelope. Progress envelopes are informational and do not replace editing the plan after validation.
 3. Keep the task within the accepted Scope. Do not perform code review or unrelated cleanup.
 4. Format changed files using the project's existing formatter when applicable.
-5. Validate before committing:
+5. Validate before committing. Immediately before each validation command or non-regression check, output this progress envelope as a separate assistant message:
+<<<RALPHEX:PROGRESS>>>
+{"stage":"validation","text":"command or concise validation activity"}
+<<<RALPHEX:END>>>
+Then:
    - Run the commands explicitly listed in the plan when applicable to this task.
    - For a documentation-only task, validate the document against the referenced source; do not run compile, typecheck, test, or build commands unless the plan explicitly requires them for that individual task.
    - Otherwise, if the plan has no usable validation command, identify and run the project's cheapest existing non-destructive compile, analyze, typecheck, or build command.

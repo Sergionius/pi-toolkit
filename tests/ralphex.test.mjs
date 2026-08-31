@@ -227,6 +227,41 @@ test("ralphex plan parser finds ordered incomplete task sections", () => {
   assert.equal(planModule.firstIncompleteTask(sample).number, 1);
 });
 
+test("ralphex task progress parser accepts valid live updates", () => {
+  const checkbox = ralphex.parseTaskProgress(`before
+<<<RALPHEX:PROGRESS>>>
+{"stage":"checkbox","index":2,"total":4,"text":" Update error handling "}
+<<<RALPHEX:END>>>`);
+  assert.deepEqual(checkbox, {
+    stage: "checkbox",
+    index: 2,
+    total: 4,
+    text: "Update error handling",
+  });
+  assert.equal(
+    ralphex.formatTaskProgress(checkbox, "bash: npm test"),
+    "Checkbox 2/4 · Update error handling — bash: npm test",
+  );
+
+  const validation = ralphex.parseTaskProgress(`
+<<<RALPHEX:PROGRESS>>>
+{"stage":"validation","text":"npm test"}
+<<<RALPHEX:END>>>`);
+  assert.deepEqual(validation, { stage: "validation", text: "npm test" });
+  assert.equal(ralphex.formatTaskProgress(validation), "Validation · npm test");
+});
+
+test("ralphex task progress parser ignores malformed or invalid updates", () => {
+  const invalid = [
+    `<<<RALPHEX:PROGRESS>>>\nnot json\n<<<RALPHEX:END>>>`,
+    `<<<RALPHEX:PROGRESS>>>\n{"stage":"checkbox","index":0,"total":2,"text":"item"}\n<<<RALPHEX:END>>>`,
+    `<<<RALPHEX:PROGRESS>>>\n{"stage":"checkbox","index":3,"total":2,"text":"item"}\n<<<RALPHEX:END>>>`,
+    `<<<RALPHEX:PROGRESS>>>\n{"stage":"validation","text":"  "}\n<<<RALPHEX:END>>>`,
+    `<<<RALPHEX:PROGRESS>>>\n{"stage":"unknown","text":"item"}\n<<<RALPHEX:END>>>`,
+  ];
+  for (const signal of invalid) assert.equal(ralphex.parseTaskProgress(signal), undefined);
+});
+
 test("ralphex base marker is stable and machine-readable", () => {
   const withBase = planModule.ensureBaseCommit(sample, "abcdef1234567890");
   assert.equal(planModule.baseCommit(withBase), "abcdef1234567890");
@@ -256,6 +291,10 @@ test("task prompt enforces one task, validation, commit, and mode-specific ambig
   assert.match(interactive, /pre-existing issues outside this task/);
   assert.match(interactive, /non-regression pass/);
   assert.match(interactive, /feat: <task summary>/);
+  assert.match(interactive, /Immediately before starting each unchecked item/);
+  assert.match(interactive, /"stage":"checkbox"/);
+  assert.match(interactive, /Immediately before each validation command/);
+  assert.match(interactive, /"stage":"validation"/);
   assert.match(interactive, /<<<RALPHEX:QUESTION>>>/);
 
   const auto = prompts.taskPrompt({ planPath: "docs/plans/feature.md", task, auto: true });

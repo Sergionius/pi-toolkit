@@ -10,6 +10,7 @@ import { claudeReviewPrompt, fixerPrompt, parseClaudeReview, taskPrompt, type Cl
 const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const CLAUDE_WRAPPER = join(PACKAGE_ROOT, "skills", "ask-claude", "scripts", "ask-claude.sh");
 const QUESTION_PATTERN = /<<<RALPHEX:QUESTION>>>\s*\n?([\s\S]*?)\n?<<<RALPHEX:END>>>/;
+const PROGRESS_PATTERN = /<<<RALPHEX:PROGRESS>>>\s*\n?([\s\S]*?)\n?<<<RALPHEX:END>>>/g;
 const TASK_RETRIES = 1;
 const REVIEW_FIX_ITERATIONS = 3;
 
@@ -22,6 +23,13 @@ type ExecResult = {
   root: string;
   planPath: string;
   tasksCompleted: number;
+};
+
+type TaskProgress = {
+  stage: "checkbox" | "validation";
+  text: string;
+  index?: number;
+  total?: number;
 };
 
 type ParsedCommandArgs = {
@@ -243,6 +251,43 @@ function parseQuestion(text: string): string | undefined {
   }
 }
 
+function parseTaskProgress(text: string): TaskProgress | undefined {
+  let latest: TaskProgress | undefined;
+  for (const match of text.matchAll(PROGRESS_PATTERN)) {
+    try {
+      const parsed = JSON.parse(match[1].trim()) as Partial<TaskProgress>;
+      const progressText = typeof parsed.text === "string" ? parsed.text.trim() : "";
+      if (!progressText) continue;
+      if (parsed.stage === "validation") {
+        latest = { stage: "validation", text: progressText };
+        continue;
+      }
+      if (parsed.stage !== "checkbox"
+        || !Number.isInteger(parsed.index)
+        || !Number.isInteger(parsed.total)
+        || Number(parsed.index) < 1
+        || Number(parsed.total) < Number(parsed.index)) continue;
+      latest = {
+        stage: "checkbox",
+        text: progressText,
+        index: Number(parsed.index),
+        total: Number(parsed.total),
+      };
+    } catch {
+      // Progress is informational and malformed worker output must not affect execution.
+    }
+  }
+  return latest;
+}
+
+function formatTaskProgress(progress: TaskProgress, activity?: string): string {
+  const label = progress.stage === "checkbox"
+    ? `Checkbox ${progress.index}/${progress.total} · ${progress.text}`
+    : `Validation · ${progress.text}`;
+  const detail = activity ? compactActivity(activity) : "";
+  return detail ? `${label} — ${detail}` : label;
+}
+
 function diagnostic(result: { assistantText: string; stderr: string; code: number }): string {
   return [result.assistantText, result.stderr, `exit code: ${result.code}`].filter(Boolean).join("\n").slice(-8000);
 }
@@ -280,13 +325,19 @@ async function executePlan(
 
     while (!taskDone) {
       const before = await head(root);
+      let progress: TaskProgress | undefined;
+      const progressTitle = `${progressName} · Task ${task.number}: ${task.title}`;
       const result = await runPiWorker({
         cwd: root,
         prompt: taskPrompt({ planPath: relative(root, resolved.path), task, auto: resolved.auto, retryContext }),
         model: workerModel(ctx),
         thinking: ctx.thinkingLevel,
-        onText: (text) => showProgress(ctx, `${progressName} · Task ${task.number}: ${task.title}`, text),
-        onActivity: (text) => showProgress(ctx, `${progressName} · Task ${task.number}: ${task.title}`, text),
+        onText: (text) => {
+          const update = parseTaskProgress(text);
+          if (update) progress = update;
+          showProgress(ctx, progressTitle, progress ? formatTaskProgress(progress) : text);
+        },
+        onActivity: (text) => showProgress(ctx, progressTitle, progress ? formatTaskProgress(progress, text) : text),
       });
       ctx.ui.setWidget("ralphex", undefined);
 
@@ -701,4 +752,4 @@ export default function (pi: ExtensionAPI) {
   });
 }
 
-export { commitAndPushReleaseChanges, commitCompletedPlanMove, executePlan, moveCompletedPlan, parseCommandArgs, reviewPlan, resolvePlan, resolveRequestedPlan, runLoop };
+export { commitAndPushReleaseChanges, commitCompletedPlanMove, executePlan, formatTaskProgress, moveCompletedPlan, parseCommandArgs, parseTaskProgress, reviewPlan, resolvePlan, resolveRequestedPlan, runLoop };
