@@ -125,6 +125,22 @@ The command does not use subagents, review the plan, implement it, create commit
 /ralphex-plan
 ```
 
+For unattended plan-only use, add `--auto`. This uses the same read-only autonomous planning worker as `/ralphex-auto`, records selected options, alternatives, reasons, side effects, assumptions, and limitations in `## Execution Notes`, but does not execute the plan:
+
+```text
+/ralphex-plan --auto --model openai-codex/gpt-5.6-sol add response caching
+```
+
+Scripts can request one stable JSON result and use its `status` field as authoritative:
+
+```bash
+pi -p '/ralphex-plan --auto --json --model openai-codex/gpt-5.6-sol add response caching' > plan-result.json
+PLAN=$(jq -r 'select(.status == "planned") | .plan' plan-result.json)
+pi -p "/ralphex-exec --auto --model zai/glm-5.3-flash $PLAN"
+```
+
+The JSON includes `plan`, `model`, `decisions`, `alternatives`, `reason`, `sideEffects`, `assumptions`, and `limitations`. Blocked planning returns `{"status":"blocked","phase":"planning","reason":"..."}` and creates no plan.
+
 ## Autonomous Ralphex planning and execution
 
 Configure separate default models for autonomous planning and execution:

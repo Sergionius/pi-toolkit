@@ -56,6 +56,29 @@ type ParsedAutoArgs = {
   execModel?: string;
 };
 
+type ParsedPlanCommandArgs = {
+  auto: boolean;
+  json: boolean;
+  request: string;
+  model?: string;
+};
+
+export type AutonomousDecision = {
+  decision: string;
+  alternatives: string[];
+  reason: string;
+  sideEffects: string[];
+};
+
+export type AutonomousPlanResult = {
+  root: string;
+  planPath: string;
+  model: string;
+  decisions: AutonomousDecision[];
+  assumptions: string[];
+  limitations: string[];
+};
+
 type ReviewResult = {
   root: string;
   planPath: string;
@@ -216,6 +239,34 @@ function parseAutoArgs(args: string): ParsedAutoArgs {
     request.push(token);
   }
   return { request: request.join(" ").trim(), planModel, execModel };
+}
+
+function parsePlanCommandArgs(args: string): ParsedPlanCommandArgs {
+  const tokens = commandTokens(args);
+  if (!tokens.includes("--auto")) return { auto: false, json: false, request: args.trim() };
+  const request: string[] = [];
+  let json = false;
+  let model: string | undefined;
+  for (let index = 0; index < tokens.length; index++) {
+    const token = tokens[index];
+    if (token === "--auto") continue;
+    if (token === "--json") {
+      json = true;
+      continue;
+    }
+    if (token === "--model") {
+      model = tokens[++index];
+      if (!model || model.startsWith("--")) throw new Error("--model requires provider/model");
+      continue;
+    }
+    if (token.startsWith("--model=")) {
+      model = token.slice("--model=".length);
+      if (!model) throw new Error("--model requires provider/model");
+      continue;
+    }
+    request.push(token);
+  }
+  return { auto: true, json, request: request.join(" ").trim(), model };
 }
 
 function parseCommandArgs(args: string): ParsedCommandArgs {
@@ -552,6 +603,94 @@ async function saveGeneratedPlan(root: string, markdown: string, date = new Date
   }
 }
 
+function splitReportValues(value: string): string[] {
+  const clean = value.trim();
+  if (!clean || /^(none|нет|не выявлены)$/i.test(clean)) return [];
+  return clean.split(/\s*(?:,|\|)\s*/).map((item) => item.trim()).filter(Boolean);
+}
+
+function autonomousPlanReport(markdown: string): Pick<AutonomousPlanResult, "decisions" | "assumptions" | "limitations"> {
+  const decisions: AutonomousDecision[] = [];
+  const assumptions: string[] = [];
+  const limitations: string[] = [];
+  for (const note of executionNotes(markdown)) {
+    const decision = note.match(/^Decision:\s*(.*?);\s*Alternatives:\s*(.*?);\s*Reason:\s*(.*?);\s*Side effects:\s*(.*)$/i);
+    if (decision) {
+      decisions.push({
+        decision: decision[1].trim(),
+        alternatives: splitReportValues(decision[2]),
+        reason: decision[3].trim(),
+        sideEffects: splitReportValues(decision[4]),
+      });
+      continue;
+    }
+    const assumption = note.match(/^(?:Assumption|Допущение):\s*(.+)$/i)?.[1]?.trim();
+    if (assumption) assumptions.push(assumption);
+    const limitation = note.match(/^(?:Limitation|Ограничение):\s*(.+)$/i)?.[1]?.trim();
+    if (limitation) limitations.push(limitation);
+  }
+  return { decisions, assumptions, limitations };
+}
+
+async function generateAutonomousPlan(options: {
+  ctx: ExtensionCommandContext;
+  root: string;
+  request: string;
+  model: string;
+  progressName: string;
+}): Promise<AutonomousPlanResult> {
+  const dirty = await dirtyPaths(options.root);
+  if (dirty.length) throw new Error(`autonomous planning requires a clean worktree:\n${dirty.map((path) => `- ${path}`).join("\n")}`);
+
+  let retryContext: string | undefined;
+  let markdown: string | undefined;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    showProgress(options.ctx, `${options.progressName} · Planning`, attempt ? "Retrying invalid plan…" : "Inspecting project and creating plan…");
+    const result = await runPiWorker({
+      cwd: options.root,
+      prompt: autonomousPlanPrompt(options.request, retryContext),
+      model: options.model,
+      thinking: options.ctx.thinkingLevel,
+      tools: ["read", "grep", "find", "ls"],
+      onText: (text) => showProgress(options.ctx, `${options.progressName} · Planning`, text),
+      onActivity: (text) => showProgress(options.ctx, `${options.progressName} · Planning`, text),
+    });
+    if (result.code === 0) {
+      try {
+        markdown = parseGeneratedPlan(result.assistantText);
+        break;
+      } catch (error) {
+        if (String(error).includes("planning blocked:")) throw error;
+        retryContext = `${errorText(error)}\n${diagnostic(result)}`;
+      }
+    } else {
+      retryContext = diagnostic(result);
+    }
+  }
+  if (!markdown) throw new Error(`planning failed after retry\n${retryContext ?? "unknown planning failure"}`);
+  const planPath = await saveGeneratedPlan(options.root, markdown);
+  options.ctx.ui.notify(`Plan created: ${relative(options.root, planPath)}`, "info");
+  return {
+    root: options.root,
+    planPath,
+    model: options.model,
+    ...autonomousPlanReport(markdown),
+  };
+}
+
+export async function createAutonomousPlan(ctx: ExtensionCommandContext, request: string, model?: string): Promise<AutonomousPlanResult> {
+  if (!request.trim()) throw new Error("task is required: /ralphex-plan --auto <task>");
+  const root = await repositoryRoot(ctx.cwd);
+  const config = await resolveModelConfig({
+    root,
+    projectTrusted: ctx.isProjectTrusted(),
+    overrides: model ? { planModel: model } : undefined,
+  });
+  if (!config.planModel) throw new Error("planning model is required; run /ralphex-models first or pass --model");
+  validateConfiguredModel(ctx, config.planModel, "Planning");
+  return generateAutonomousPlan({ ctx, root, request: request.trim(), model: config.planModel, progressName: "Ralphex plan" });
+}
+
 async function runRalphexAuto(pi: ExtensionAPI, ctx: ExtensionCommandContext, rawArgs: string): Promise<void> {
   const parsed = parseAutoArgs(rawArgs);
   if (!parsed.request) throw new Error("task is required: /ralphex-auto <task>");
@@ -565,41 +704,17 @@ async function runRalphexAuto(pi: ExtensionAPI, ctx: ExtensionCommandContext, ra
   validateConfiguredModel(ctx, config.planModel, "Planning");
   validateConfiguredModel(ctx, config.execModel, "Execution");
 
-  const dirty = await dirtyPaths(root);
-  if (dirty.length) throw new Error(`ralphex-auto requires a clean worktree before planning:\n${dirty.map((path) => `- ${path}`).join("\n")}`);
-
   let planPath: string | undefined;
   let phase = "planning";
   try {
-    let retryContext: string | undefined;
-    let markdown: string | undefined;
-    for (let attempt = 0; attempt < 2; attempt++) {
-      showProgress(ctx, "Ralphex auto · Planning", attempt ? "Retrying invalid plan…" : "Inspecting project and creating plan…");
-      const result = await runPiWorker({
-        cwd: root,
-        prompt: autonomousPlanPrompt(parsed.request, retryContext),
-        model: config.planModel,
-        thinking: ctx.thinkingLevel,
-        tools: ["read", "grep", "find", "ls"],
-        onText: (text) => showProgress(ctx, "Ralphex auto · Planning", text),
-        onActivity: (text) => showProgress(ctx, "Ralphex auto · Planning", text),
-      });
-      if (result.code === 0) {
-        try {
-          markdown = parseGeneratedPlan(result.assistantText);
-          break;
-        } catch (error) {
-          if (String(error).includes("planning blocked:")) throw error;
-          retryContext = `${errorText(error)}\n${diagnostic(result)}`;
-        }
-      } else {
-        retryContext = diagnostic(result);
-      }
-    }
-    if (!markdown) throw new Error(`planning failed after retry\n${retryContext ?? "unknown planning failure"}`);
-    planPath = await saveGeneratedPlan(root, markdown);
-    ctx.ui.notify(`Plan created: ${relative(root, planPath)}`, "info");
-
+    const planned = await generateAutonomousPlan({
+      ctx,
+      root,
+      request: parsed.request,
+      model: config.planModel,
+      progressName: "Ralphex auto",
+    });
+    planPath = planned.planPath;
     phase = "execution";
     const execution = await executePlan(pi, ctx, `--auto --model "${config.execModel}" "${relative(root, planPath)}"`, {
       announceCompletion: false,
@@ -1125,6 +1240,7 @@ export {
   parseCommandArgs,
   parseGeneratedPlan,
   parseModelConfigArgs,
+  parsePlanCommandArgs,
   parseTaskProgress,
   parseTaskSummary,
   reviewPlan,
@@ -1132,5 +1248,6 @@ export {
   resolveRequestedPlan,
   runLoop,
   saveGeneratedPlan,
+  autonomousPlanReport,
   validateGeneratedPlan,
 };

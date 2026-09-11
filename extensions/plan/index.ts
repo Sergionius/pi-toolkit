@@ -2,6 +2,7 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-c
 import { mkdir, writeFile } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { Type } from "typebox";
+import { createAutonomousPlan, parsePlanCommandArgs, type AutonomousPlanResult } from "../ralphex/index";
 import {
   currentPlanMode,
   extractProposedPlan,
@@ -243,6 +244,76 @@ function assistantTextFromAgentEnd(event: any) {
     .join("\n");
 }
 
+function autonomousPlanPayload(result: AutonomousPlanResult) {
+  return {
+    status: "planned" as const,
+    plan: relative(result.root, result.planPath),
+    model: result.model,
+    decisions: result.decisions,
+    assumptions: result.assumptions,
+    limitations: result.limitations,
+  };
+}
+
+function formatAutonomousPlanResult(result: AutonomousPlanResult): string {
+  const lines = [
+    "✓ Ralphex autonomous plan created",
+    "",
+    `Plan: ${relative(result.root, result.planPath)}`,
+    `Model: ${result.model}`,
+    "",
+    "Решения:",
+  ];
+  if (!result.decisions.length) lines.push("- Материальных автономных решений не зафиксировано");
+  for (const item of result.decisions) {
+    lines.push(`- Выбрано: ${item.decision}`);
+    lines.push(`  Альтернативы: ${item.alternatives.length ? item.alternatives.join(", ") : "не было"}`);
+    lines.push(`  Причина: ${item.reason}`);
+    lines.push(`  Побочные эффекты: ${item.sideEffects.length ? item.sideEffects.join(", ") : "нет"}`);
+  }
+  lines.push("", "Допущения:", ...(result.assumptions.length ? result.assumptions.map((item) => `- ${item}`) : ["- Нет"]));
+  lines.push("", "Ограничения:", ...(result.limitations.length ? result.limitations.map((item) => `- ${item}`) : ["- Нет"]));
+  return lines.join("\n");
+}
+
+function emitAutonomousPlanOutput(pi: ExtensionAPI, ctx: ExtensionCommandContext, content: string): void {
+  if (ctx.mode === "print") {
+    process.stdout.write(`${content}\n`);
+    return;
+  }
+  pi.sendMessage({ customType: "ralphex", content, display: true });
+}
+
+export async function startAutonomousRalphexPlan(
+  pi: ExtensionAPI,
+  ctx: ExtensionCommandContext,
+  args: string,
+  createPlan: typeof createAutonomousPlan = createAutonomousPlan,
+): Promise<void> {
+  let parsed;
+  try {
+    parsed = parsePlanCommandArgs(args);
+    const result = await createPlan(ctx, parsed.request, parsed.model);
+    const content = parsed.json
+      ? JSON.stringify(autonomousPlanPayload(result))
+      : formatAutonomousPlanResult(result);
+    emitAutonomousPlanOutput(pi, ctx, content);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    const json = parsed?.json ?? commandTokensForJsonFallback(args);
+    const content = json
+      ? JSON.stringify({ status: "blocked", phase: "planning", reason })
+      : `✗ Ralphex autonomous plan blocked\n\nPhase: planning\nReason: ${reason}`;
+    emitAutonomousPlanOutput(pi, ctx, content);
+  } finally {
+    ctx.ui.setWidget("ralphex", undefined);
+  }
+}
+
+function commandTokensForJsonFallback(args: string): boolean {
+  return /(?:^|\s)--json(?:\s|$)/.test(args);
+}
+
 export async function startRalphexPlan(
   pi: ExtensionAPI,
   ctx: ExtensionCommandContext,
@@ -401,8 +472,12 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerCommand("ralphex-plan", {
-    description: "Create an accepted implementation plan in docs/plans/ without implementing it",
+    description: "Create an implementation plan; add --auto [--model provider/model] [--json] for unattended plan-only mode",
     handler: async (args, ctx) => {
+      if (/(?:^|\s)--auto(?:\s|$)/.test(args)) {
+        await startAutonomousRalphexPlan(pi, ctx, args);
+        return;
+      }
       await startRalphexPlan(pi, ctx, args);
     },
   });

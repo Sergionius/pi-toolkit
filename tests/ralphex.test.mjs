@@ -70,6 +70,44 @@ test("ralphex auto and exec model arguments preserve natural-language requests",
   });
 });
 
+test("ralphex-plan auto arguments preserve interactive mode and support script flags", () => {
+  assert.deepEqual(ralphex.parsePlanCommandArgs("add --json output"), {
+    auto: false,
+    json: false,
+    request: "add --json output",
+  });
+  assert.deepEqual(
+    ralphex.parsePlanCommandArgs("--auto --json --model=openai-codex/gpt-5.6-sol add separators"),
+    {
+      auto: true,
+      json: true,
+      request: "add separators",
+      model: "openai-codex/gpt-5.6-sol",
+    },
+  );
+  assert.throws(() => ralphex.parsePlanCommandArgs("--auto --model"), /requires provider\/model/);
+});
+
+test("autonomous plan report parses decisions, alternatives, side effects, and assumptions", () => {
+  const report = ralphex.autonomousPlanReport(`# Plan
+
+## Execution Notes
+- Decision: use CSS border; Alternatives: Divider component, pseudo-element; Reason: matches existing markup; Side effects: spacing changes, visible boundary
+- Assumption: claims remain table rows
+- Limitation: visual browser check unavailable
+`);
+  assert.deepEqual(report, {
+    decisions: [{
+      decision: "use CSS border",
+      alternatives: ["Divider component", "pseudo-element"],
+      reason: "matches existing markup",
+      sideEffects: ["spacing changes", "visible boundary"],
+    }],
+    assumptions: ["claims remain table rows"],
+    limitations: ["visual browser check unavailable"],
+  });
+});
+
 test("ralphex model config resolves global, project, and one-run precedence", async () => {
   const temporary = await mkdtemp(join(tmpdir(), "ralphex-models-"));
   const agent = join(temporary, "agent");

@@ -29,12 +29,14 @@ function fakePi() {
   const tools = [];
   const handlers = [];
   const userMessages = [];
+  const customMessages = [];
   return {
     commands,
     commandDefinitions,
     tools,
     handlers,
     userMessages,
+    customMessages,
     api: {
       on(event, handler) { handlers.push({ event, handler }); },
       registerCommand(name, definition) {
@@ -43,6 +45,7 @@ function fakePi() {
       },
       registerTool(definition) { tools.push(definition.name); },
       sendUserMessage(message, options) { userMessages.push({ message, options }); },
+      sendMessage(message, options) { customMessages.push({ message, options }); },
       exec: async () => ({ stdout: "", stderr: "", code: 0 }),
       events: { on() {}, emit() {} },
     },
@@ -144,6 +147,70 @@ test("ralphex-plan starts an isolated planning workflow from command arguments",
   assert.doesNotMatch(prompt, /every task MUST include.*tests/i);
   assert.doesNotMatch(prompt, /launch.*review.*agent/i);
   assert.deepEqual(notifications, [{ message: "Starting /ralphex-plan", level: "info" }]);
+});
+
+test("ralphex-plan autonomous JSON mode reports saved decisions without executing", async () => {
+  const pi = fakePi();
+  const imported = await jiti.import(join(root, "extensions", "plan", "index.ts"));
+  const widgetCalls = [];
+  const ctx = {
+    cwd: "/tmp/project",
+    mode: "tui",
+    ui: { setWidget: (...args) => widgetCalls.push(args) },
+  };
+  const calls = [];
+  await imported.startAutonomousRalphexPlan(
+    pi.api,
+    ctx,
+    "--auto --json --model openai-codex/gpt-5.6-sol add separators",
+    async (_ctx, request, model) => {
+      calls.push({ request, model });
+      return {
+        root: "/tmp/project",
+        planPath: "/tmp/project/docs/plans/feature.md",
+        model,
+        decisions: [{
+          decision: "use a border",
+          alternatives: ["divider component"],
+          reason: "matches existing markup",
+          sideEffects: ["row boundary becomes visible"],
+        }],
+        assumptions: ["the current table remains"],
+        limitations: [],
+      };
+    },
+  );
+
+  assert.deepEqual(calls, [{ request: "add separators", model: "openai-codex/gpt-5.6-sol" }]);
+  assert.equal(pi.customMessages.length, 1);
+  assert.deepEqual(JSON.parse(pi.customMessages[0].message.content), {
+    status: "planned",
+    plan: "docs/plans/feature.md",
+    model: "openai-codex/gpt-5.6-sol",
+    decisions: [{
+      decision: "use a border",
+      alternatives: ["divider component"],
+      reason: "matches existing markup",
+      sideEffects: ["row boundary becomes visible"],
+    }],
+    assumptions: ["the current table remains"],
+    limitations: [],
+  });
+  assert.deepEqual(widgetCalls.at(-1), ["ralphex", undefined]);
+});
+
+test("ralphex-plan autonomous JSON mode returns structured blocked output", async () => {
+  const pi = fakePi();
+  const imported = await jiti.import(join(root, "extensions", "plan", "index.ts"));
+  const ctx = { cwd: "/tmp/project", mode: "tui", ui: { setWidget() {} } };
+  await imported.startAutonomousRalphexPlan(pi.api, ctx, "--auto --json task", async () => {
+    throw new Error("planning model is unavailable");
+  });
+  assert.deepEqual(JSON.parse(pi.customMessages[0].message.content), {
+    status: "blocked",
+    phase: "planning",
+    reason: "planning model is unavailable",
+  });
 });
 
 test("ralphex-plan asks for a request when command arguments are empty", async () => {
