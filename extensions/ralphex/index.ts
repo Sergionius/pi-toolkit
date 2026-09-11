@@ -1,4 +1,5 @@
-import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import { DynamicBorder, getSelectListTheme, type ExtensionAPI, type ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import { Container, fuzzyFilter, Input, type KeybindingsManager, type SelectItem, SelectList, Spacer, Text } from "@earendil-works/pi-tui";
 import { access, mkdir, readdir, rename, writeFile } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -1130,16 +1131,92 @@ function parseModelConfigArgs(args: string): { scope?: ModelConfigScope; planMod
   return { scope, planModel, execModel };
 }
 
+const MODEL_PICKER_VISIBLE_ROWS = 10;
+
+async function showModelPicker(
+  ctx: ExtensionCommandContext,
+  title: string,
+  items: SelectItem[],
+): Promise<string | undefined> {
+  if (ctx.mode !== "tui") {
+    const labels = items.map((item) => `${item.label}${item.description ? ` — ${item.description}` : ""}`);
+    const selected = await ctx.ui.select(title, labels);
+    return selected ? items[labels.indexOf(selected)]?.value : undefined;
+  }
+
+  const result = await ctx.ui.custom<string | null>((tui, theme, keybindings, done) => {
+    const container = new Container();
+    const searchInput = new Input();
+    const listContainer = new Container();
+    let selectList: SelectList;
+
+    const buildList = (visibleItems: SelectItem[]) => {
+      const list = new SelectList(
+        visibleItems,
+        Math.min(Math.max(visibleItems.length, 1), MODEL_PICKER_VISIBLE_ROWS),
+        getSelectListTheme(),
+      );
+      list.onSelect = (item) => done(item.value);
+      list.onCancel = () => done(null);
+      listContainer.clear();
+      listContainer.addChild(list);
+      selectList = list;
+    };
+
+    const applyFilter = () => {
+      const query = searchInput.getValue();
+      buildList(query ? fuzzyFilter(items, query, (item) => `${item.label} ${item.description ?? ""}`) : items);
+    };
+
+    container.addChild(new DynamicBorder((text: string) => theme.fg("accent", text)));
+    container.addChild(new Text(theme.fg("accent", theme.bold(title)), 1, 0));
+    container.addChild(new Spacer(1));
+    container.addChild(searchInput);
+    container.addChild(new Spacer(1));
+    container.addChild(listContainer);
+    container.addChild(new Text(theme.fg("dim", "type to filter • ↑↓ navigate • enter select • esc cancel"), 1, 0));
+    container.addChild(new DynamicBorder((text: string) => theme.fg("accent", text)));
+
+    buildList(items);
+    searchInput.onSubmit = () => selectList.handleInput("\r");
+
+    const isNavigationKey = (data: string, bindings: KeybindingsManager) =>
+      bindings.matches(data, "tui.select.up") ||
+      bindings.matches(data, "tui.select.down") ||
+      bindings.matches(data, "tui.select.pageUp") ||
+      bindings.matches(data, "tui.select.pageDown") ||
+      bindings.matches(data, "tui.select.confirm") ||
+      bindings.matches(data, "tui.select.cancel");
+
+    return {
+      get focused() { return searchInput.focused; },
+      set focused(value: boolean) { searchInput.focused = value; },
+      render: (width: number) => container.render(width),
+      invalidate: () => container.invalidate(),
+      handleInput: (data: string) => {
+        if (isNavigationKey(data, keybindings)) selectList.handleInput(data);
+        else {
+          searchInput.handleInput(data);
+          applyFilter();
+        }
+        tui.requestRender();
+      },
+    };
+  });
+
+  return result ?? undefined;
+}
+
 async function selectConfiguredModel(ctx: ExtensionCommandContext, title: string): Promise<string | undefined> {
   const models = ctx.modelRegistry.getAvailable()
     .filter((model) => ctx.modelRegistry.getProviderAuthStatus(model.provider).configured)
     .sort((left, right) => `${left.provider}/${left.id}`.localeCompare(`${right.provider}/${right.id}`));
   if (!models.length) throw new Error("no authenticated models are available");
-  const options = models.map((model) => `${model.provider}/${model.id} — ${model.name}`);
-  const selected = await ctx.ui.select(title, options);
-  if (!selected) return undefined;
-  const model = models[options.indexOf(selected)];
-  return model ? `${model.provider}/${model.id}` : undefined;
+  return showModelPicker(ctx, title, models.map((model) => ({
+    value: `${model.provider}/${model.id}`,
+    label: `${model.provider}/${model.id}`,
+    description: model.name,
+  })));
 }
 
 async function configureModels(ctx: ExtensionCommandContext, args: string): Promise<void> {
