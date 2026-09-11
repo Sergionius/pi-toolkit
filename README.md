@@ -11,6 +11,7 @@ Private personal [Pi](https://pi.dev) package containing reusable extensions, pr
 - `codex-status.ts` — Codex usage and reset-credit commands.
 - `codex-accounts.ts` — local multi-account manager for OpenAI/Codex OAuth profiles.
 - `provider-switch.ts` — confirmed default-provider switching between Codex and Kimi with remembered models.
+- `commit.ts` — global `/commit` command: stages all changes and creates a local commit using a GPT Luna message, without pushing.
 - `figma-context.ts` — `figma_get_screen_context` tool.
 - `flutter-refresh.ts` — automatic Flutter reload/restart after successful edits.
 - `notify-sound.ts` — completion sound without routine visual noise.
@@ -60,6 +61,14 @@ Check the installation:
 ```text
 /pi-toolkit-doctor
 ```
+
+Create a local commit from any Git repository:
+
+```text
+/commit
+```
+
+The command runs `git add .` from the repository root, asks a separate ephemeral `openai-codex/gpt-5.6-luna` Pi process with low reasoning for a validated Conventional Commit message, and runs `git commit`. It never pushes.
 
 ## Update
 
@@ -283,7 +292,7 @@ npm install
 npm test
 ```
 
-Tests load every extension, check command registration, exercise the Flutter handshake, verify the Claude wrapper with a mock CLI, and verify idempotent VS Code bridge synchronization in temporary directories.
+Tests load every extension, check command registration, exercise local commit behavior, exercise the Flutter handshake, verify the Claude wrapper with a mock CLI, and verify idempotent VS Code bridge synchronization in temporary directories.
 
 ## Migration from global files
 
