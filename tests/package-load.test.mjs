@@ -17,6 +17,7 @@ const extensionFiles = [
   "extensions/flutter-refresh.ts",
   "extensions/goal/index.ts",
   "extensions/notify-sound.ts",
+  "extensions/orca-ralphex-status.ts",
   "extensions/plan/index.ts",
   "extensions/provider-switch.ts",
   "extensions/ralphex/index.ts",
