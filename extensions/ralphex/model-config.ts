@@ -50,7 +50,10 @@ export async function resolveModelConfig(options: {
   const paths = modelConfigPaths(options.root, options.agentDir);
   const global = await readModelConfig(paths.global);
   const project = options.projectTrusted ? await readModelConfig(paths.project) : {};
-  return { ...global, ...project, ...options.overrides };
+  const overrides = Object.fromEntries(
+    Object.entries(options.overrides ?? {}).filter(([, value]) => value !== undefined),
+  ) as RalphexModelOverrides;
+  return { ...global, ...project, ...overrides };
 }
 
 export async function writeModelConfig(path: string, config: RalphexModelConfig, privateFile = false): Promise<void> {

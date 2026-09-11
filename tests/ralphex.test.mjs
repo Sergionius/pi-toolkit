@@ -140,6 +140,15 @@ test("ralphex model config resolves global, project, and one-run precedence", as
       planModel: "openai/one-run",
       execModel: "zai/project-exec",
     });
+    assert.deepEqual(await modelConfig.resolveModelConfig({
+      root: project,
+      projectTrusted: true,
+      agentDir: agent,
+      overrides: { planModel: undefined, execModel: undefined },
+    }), {
+      planModel: "openai/global-plan",
+      execModel: "zai/project-exec",
+    });
     assert.deepEqual(await modelConfig.resolveModelConfig({ root: project, projectTrusted: false, agentDir: agent }), {
       planModel: "openai/global-plan",
       execModel: "openai/global-exec",
