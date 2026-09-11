@@ -291,6 +291,8 @@ export async function startAutonomousRalphexPlan(
   createPlan: typeof createAutonomousPlan = createAutonomousPlan,
 ): Promise<void> {
   let parsed;
+  let completed = false;
+  pi.events.emit("ralphex:started", { name: "Ralphex plan" });
   try {
     parsed = parsePlanCommandArgs(args);
     const result = await createPlan(ctx, parsed.request, parsed.model);
@@ -298,6 +300,7 @@ export async function startAutonomousRalphexPlan(
       ? JSON.stringify(autonomousPlanPayload(result))
       : formatAutonomousPlanResult(result);
     emitAutonomousPlanOutput(pi, ctx, content);
+    completed = true;
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     const json = parsed?.json ?? commandTokensForJsonFallback(args);
@@ -307,6 +310,7 @@ export async function startAutonomousRalphexPlan(
     emitAutonomousPlanOutput(pi, ctx, content);
   } finally {
     ctx.ui.setWidget("ralphex", undefined);
+    pi.events.emit(completed ? "ralphex:completed" : "ralphex:failed", { name: "Ralphex plan" });
   }
 }
 

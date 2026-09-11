@@ -22,6 +22,7 @@ const REVIEW_FIX_ITERATIONS = 3;
 type WorkflowOptions = {
   announceCompletion?: boolean;
   progressName?: string;
+  statusDetail?: string;
 };
 
 type TaskSummary = {
@@ -424,6 +425,18 @@ function workerModel(ctx: ExtensionCommandContext): string | undefined {
   return ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined;
 }
 
+function formatWorkflowStatus(label: string, detail: string, width: number): string {
+  return `${label}${" ".repeat(Math.max(1, width - label.length - detail.length))}${detail}`;
+}
+
+function setRalphexStatus(ctx: ExtensionCommandContext, label: string, detail?: string): void {
+  if (!detail) {
+    ctx.ui.setStatus("ralphex", label);
+    return;
+  }
+  ctx.ui.setStatus("ralphex", formatWorkflowStatus(label, detail, process.stdout.columns ?? 120));
+}
+
 function validateConfiguredModel(ctx: ExtensionCommandContext, value: string, label: string): void {
   const separator = value.indexOf("/");
   if (separator < 1 || separator === value.length - 1) throw new Error(`${label} model must use provider/model format: ${value}`);
@@ -445,6 +458,8 @@ async function executePlan(
   if (resolved.release) throw new Error("--release is supported by /ralphex-review and /ralphex-loop, not /ralphex-exec");
   if (resolved.model) validateConfiguredModel(ctx, resolved.model, "Execution");
   const progressName = options.progressName ?? "Ralphex exec";
+  const model = resolved.model ?? workerModel(ctx);
+  setRalphexStatus(ctx, progressName, options.statusDetail ?? `${model ?? "default model"} · ${resolved.auto ? "auto" : "interactive"}`);
   const { root, base } = await ensureExecPreflight(ctx, resolved.path, resolved.auto);
   const original = await readPlan(resolved.path);
   if (!firstIncompleteTask(original)) throw new Error("plan has no incomplete Task checkboxes");
@@ -471,7 +486,7 @@ async function executePlan(
       const result = await runPiWorker({
         cwd: root,
         prompt: taskPrompt({ planPath: relative(root, resolved.path), task, auto: resolved.auto, retryContext }),
-        model: resolved.model ?? workerModel(ctx),
+        model,
         thinking: ctx.thinkingLevel,
         onText: (text) => {
           const update = parseTaskProgress(text);
@@ -639,7 +654,9 @@ async function generateAutonomousPlan(options: {
   request: string;
   model: string;
   progressName: string;
+  statusDetail?: string;
 }): Promise<AutonomousPlanResult> {
+  setRalphexStatus(options.ctx, options.progressName, options.statusDetail ?? `${options.model} · auto`);
   const dirty = await dirtyPaths(options.root);
   if (dirty.length) throw new Error(`autonomous planning requires a clean worktree:\n${dirty.map((path) => `- ${path}`).join("\n")}`);
 
@@ -707,6 +724,7 @@ async function runRalphexAuto(pi: ExtensionAPI, ctx: ExtensionCommandContext, ra
 
   let planPath: string | undefined;
   let phase = "planning";
+  const statusDetail = `plan: ${config.planModel} · exec: ${config.execModel} · auto`;
   try {
     const planned = await generateAutonomousPlan({
       ctx,
@@ -714,12 +732,14 @@ async function runRalphexAuto(pi: ExtensionAPI, ctx: ExtensionCommandContext, ra
       request: parsed.request,
       model: config.planModel,
       progressName: "Ralphex auto",
+      statusDetail,
     });
     planPath = planned.planPath;
     phase = "execution";
     const execution = await executePlan(pi, ctx, `--auto --model "${config.execModel}" "${relative(root, planPath)}"`, {
       announceCompletion: false,
       progressName: "Ralphex auto",
+      statusDetail,
     });
     const finalPlan = await readPlan(planPath);
     const notes = executionNotes(finalPlan);
@@ -1265,7 +1285,7 @@ async function commandBoundary(
   name: string,
   operation: () => Promise<void>,
 ): Promise<void> {
-  ctx.ui.setStatus("ralphex", name);
+  setRalphexStatus(ctx, name);
   pi.events.emit("ralphex:started", { name });
   try {
     await operation();
@@ -1312,6 +1332,7 @@ export {
   commitCompletedPlanMove,
   executePlan,
   formatTaskProgress,
+  formatWorkflowStatus,
   moveCompletedPlan,
   parseAutoArgs,
   parseCommandArgs,

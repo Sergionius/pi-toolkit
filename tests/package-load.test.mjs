@@ -30,6 +30,7 @@ function fakePi() {
   const handlers = [];
   const userMessages = [];
   const customMessages = [];
+  const emittedEvents = [];
   return {
     commands,
     commandDefinitions,
@@ -37,6 +38,7 @@ function fakePi() {
     handlers,
     userMessages,
     customMessages,
+    emittedEvents,
     api: {
       on(event, handler) { handlers.push({ event, handler }); },
       registerCommand(name, definition) {
@@ -47,7 +49,7 @@ function fakePi() {
       sendUserMessage(message, options) { userMessages.push({ message, options }); },
       sendMessage(message, options) { customMessages.push({ message, options }); },
       exec: async () => ({ stdout: "", stderr: "", code: 0 }),
-      events: { on() {}, emit() {} },
+      events: { on() {}, emit(name, payload) { emittedEvents.push({ name, payload }); } },
     },
   };
 }
@@ -197,6 +199,7 @@ test("ralphex-plan autonomous JSON mode reports saved decisions without executin
     limitations: [],
   });
   assert.deepEqual(widgetCalls.at(-1), ["ralphex", undefined]);
+  assert.deepEqual(pi.emittedEvents.map(({ name }) => name), ["ralphex:started", "ralphex:completed"]);
 });
 
 test("ralphex-plan autonomous JSON mode returns structured blocked output", async () => {
@@ -211,6 +214,7 @@ test("ralphex-plan autonomous JSON mode returns structured blocked output", asyn
     phase: "planning",
     reason: "planning model is unavailable",
   });
+  assert.deepEqual(pi.emittedEvents.map(({ name }) => name), ["ralphex:started", "ralphex:failed"]);
 });
 
 test("ralphex-plan asks for a request when command arguments are empty", async () => {

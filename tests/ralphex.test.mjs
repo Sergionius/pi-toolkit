@@ -31,6 +31,13 @@ const sample = `# Feature
 - no task checkbox
 `;
 
+test("ralphex workflow status right-aligns model and execution mode", () => {
+  const status = ralphex.formatWorkflowStatus("Ralphex exec", "zai/glm-5.3-flash · auto", 60);
+  assert.equal(status.length, 60);
+  assert.ok(status.startsWith("Ralphex exec"));
+  assert.ok(status.endsWith("zai/glm-5.3-flash · auto"));
+});
+
 test("ralphex release arguments support optional and repeated task IDs", () => {
   assert.deepEqual(
     ralphex.parseCommandArgs("--auto --release test --id BTL-123 --id=BTL-456 feature.md"),
