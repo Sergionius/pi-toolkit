@@ -1,5 +1,51 @@
 import type { PlanTask } from "./plan";
 
+export function autonomousPlanPrompt(request: string, retryContext?: string): string {
+  return `# Ralphex autonomous planning worker
+
+Create a decision-complete Ralphex implementation plan for this request:
+
+${request.trim()}
+
+## Workflow
+
+1. Read all applicable project guidance and inspect the relevant repository files and existing conventions. Do not launch subagents.
+2. Do not modify files, Git state, dependencies, services, or external systems. Your only output is the plan envelope below.
+3. Do not ask the user questions. Resolve ordinary engineering ambiguity using the safest, smallest, reversible choice consistent with repository precedent.
+4. If a safe plan requires credentials, destructive action, scope expansion, resolving contradictory requirements, or inventing incompatible public behavior without precedent, output only:
+<<<RALPHEX:PLAN_BLOCKED>>>
+{"reason":"concise blocking reason"}
+<<<RALPHEX:END>>>
+5. Record every material autonomous choice under ## Execution Notes. Use one bullet per choice in this form:
+- Decision: <choice>; Alternatives: <alternatives>; Reason: <reason>; Side effects: <effects or none>
+6. Use exact discovered paths. Do not invent tests or infrastructure. Include existing relevant validation commands when discoverable.
+
+## Required plan structure
+
+# <title>
+
+## Goal
+## Context
+## Scope
+## Out of Scope (only when useful)
+## Implementation Steps
+### Task 1: <title>
+**Files:**
+- Modify/Create: <path>
+- [ ] <concrete action>
+## Validation
+## Acceptance Criteria
+## Execution Notes
+
+Task numbers must be sequential, every Task must contain at least one unchecked checkbox, and executable checkboxes must appear only in Task sections. The plan must be implementable without further product or architecture choices. Do not include review, release, push, branch, worktree, or deployment steps.
+
+Return only:
+<<<RALPHEX:PLAN>>>
+<complete Markdown plan>
+<<<RALPHEX:END>>>
+${retryContext ? `\n## Previous attempt diagnostics\n${retryContext.slice(0, 8000)}` : ""}`;
+}
+
 export function taskPrompt(options: {
   planPath: string;
   task: PlanTask;
@@ -47,7 +93,12 @@ ${options.auto ? `This is unattended mode. Do not ask the user questions. Resolv
 <<<RALPHEX:END>>>
 Then stop. For ordinary implementation details already determined by project conventions, proceed without asking.`}
 
-If the task succeeds, end with <<<RALPHEX:TASK_DONE>>>.
+If the task succeeds, end with this concise machine-readable summary followed by the completion signal:
+<<<RALPHEX:SUMMARY>>>
+{"result":"what was implemented","sideEffects":["observable effect"],"limitations":["remaining limitation"]}
+<<<RALPHEX:END>>>
+<<<RALPHEX:TASK_DONE>>>
+Use empty arrays when there are no side effects or limitations.
 If it cannot be completed after reasonable attempts, do not commit and end with <<<RALPHEX:TASK_FAILED>>>.
 ${options.retryContext ? `\n## Previous attempt diagnostics\n${options.retryContext.slice(0, 8000)}` : ""}`;
 }

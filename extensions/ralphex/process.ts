@@ -30,6 +30,7 @@ export async function runPiWorker(options: {
   prompt: string;
   model?: string;
   thinking?: string;
+  tools?: string[];
   onText?: (text: string) => void;
   onActivity?: (text: string) => void;
 }): Promise<ProcessResult> {
@@ -39,6 +40,7 @@ export async function runPiWorker(options: {
   ];
   if (options.model) args.push("--model", options.model);
   if (options.thinking) args.push("--thinking", options.thinking);
+  if (options.tools) args.push("--tools", options.tools.join(","));
   args.push(options.prompt);
 
   const invocation = piInvocation(args);

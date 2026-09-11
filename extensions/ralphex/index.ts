@@ -1,16 +1,20 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { access, mkdir, readdir, rename } from "node:fs/promises";
+import { access, mkdir, readdir, rename, writeFile } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runCdtRelease, type CdtReleaseResult, type ReleaseRequest } from "./cdt";
 import { appendExecutionNote, baseCommit, ensureBaseCommit, executionNotes, firstIncompleteTask, parseTasks, readPlan, writePlan } from "./plan";
+import { modelConfigPaths, readModelConfig, resolveModelConfig, writeModelConfig, type RalphexModelConfig } from "./model-config";
 import { runCommand, runPiWorker } from "./process";
-import { claudeReviewPrompt, fixerPrompt, parseClaudeReview, taskPrompt, type ClaudeFinding } from "./prompts";
+import { autonomousPlanPrompt, claudeReviewPrompt, fixerPrompt, parseClaudeReview, taskPrompt, type ClaudeFinding } from "./prompts";
 
 const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const CLAUDE_WRAPPER = join(PACKAGE_ROOT, "skills", "ask-claude", "scripts", "ask-claude.sh");
 const QUESTION_PATTERN = /<<<RALPHEX:QUESTION>>>\s*\n?([\s\S]*?)\n?<<<RALPHEX:END>>>/;
 const PROGRESS_PATTERN = /<<<RALPHEX:PROGRESS>>>\s*\n?([\s\S]*?)\n?<<<RALPHEX:END>>>/g;
+const SUMMARY_PATTERN = /<<<RALPHEX:SUMMARY>>>\s*\n?([\s\S]*?)\n?<<<RALPHEX:END>>>/;
+const GENERATED_PLAN_PATTERN = /<<<RALPHEX:PLAN>>>\s*\n?([\s\S]*?)\n?<<<RALPHEX:END>>>/;
+const PLAN_BLOCKED_PATTERN = /<<<RALPHEX:PLAN_BLOCKED>>>\s*\n?([\s\S]*?)\n?<<<RALPHEX:END>>>/;
 const TASK_RETRIES = 1;
 const REVIEW_FIX_ITERATIONS = 3;
 
@@ -19,10 +23,17 @@ type WorkflowOptions = {
   progressName?: string;
 };
 
+type TaskSummary = {
+  result: string;
+  sideEffects: string[];
+  limitations: string[];
+};
+
 type ExecResult = {
   root: string;
   planPath: string;
   tasksCompleted: number;
+  summaries: TaskSummary[];
 };
 
 type TaskProgress = {
@@ -35,7 +46,14 @@ type TaskProgress = {
 type ParsedCommandArgs = {
   auto: boolean;
   requested: string;
+  model?: string;
   release?: ReleaseRequest;
+};
+
+type ParsedAutoArgs = {
+  request: string;
+  planModel?: string;
+  execModel?: string;
 };
 
 type ReviewResult = {
@@ -113,7 +131,7 @@ function showProgress(ctx: ExtensionCommandContext, title: string, activity?: st
   ctx.ui.setWidget("ralphex", lines);
 }
 
-async function ensureExecPreflight(ctx: ExtensionCommandContext, planPath: string): Promise<{ root: string; base: string }> {
+async function ensureExecPreflight(ctx: ExtensionCommandContext, planPath: string, auto = false): Promise<{ root: string; base: string }> {
   const root = await repositoryRoot(ctx.cwd);
   const relativePlan = normalizeRelative(relative(root, planPath));
   if (relativePlan.startsWith("../") || relativePlan === "..") throw new Error("plan must be inside the current Git repository");
@@ -127,7 +145,7 @@ async function ensureExecPreflight(ctx: ExtensionCommandContext, planPath: strin
   }
 
   const branch = await git(root, ["branch", "--show-current"]);
-  if (["main", "master", "trunk"].includes(branch)) {
+  if (["main", "master", "trunk"].includes(branch) && !auto) {
     const confirmed = await ctx.ui.confirm(
       "Run Ralphex on the default branch?",
       `Current branch is ${branch}. Task commits will be created directly on this branch.`,
@@ -171,16 +189,56 @@ function commandTokens(args: string): string[] {
   }) ?? [];
 }
 
+function parseAutoArgs(args: string): ParsedAutoArgs {
+  const tokens = commandTokens(args);
+  const request: string[] = [];
+  let planModel: string | undefined;
+  let execModel: string | undefined;
+  for (let index = 0; index < tokens.length; index++) {
+    const token = tokens[index];
+    if (token === "--plan-model" || token === "--exec-model") {
+      const value = tokens[++index];
+      if (!value || value.startsWith("--")) throw new Error(`${token} requires provider/model`);
+      if (token === "--plan-model") planModel = value;
+      else execModel = value;
+      continue;
+    }
+    if (token.startsWith("--plan-model=")) {
+      planModel = token.slice("--plan-model=".length);
+      if (!planModel) throw new Error("--plan-model requires provider/model");
+      continue;
+    }
+    if (token.startsWith("--exec-model=")) {
+      execModel = token.slice("--exec-model=".length);
+      if (!execModel) throw new Error("--exec-model requires provider/model");
+      continue;
+    }
+    request.push(token);
+  }
+  return { request: request.join(" ").trim(), planModel, execModel };
+}
+
 function parseCommandArgs(args: string): ParsedCommandArgs {
   const tokens = commandTokens(args);
   const positional: string[] = [];
   const ids: string[] = [];
   let auto = false;
+  let model: string | undefined;
   let pipeline: string | undefined;
   for (let index = 0; index < tokens.length; index++) {
     const token = tokens[index];
     if (token === "--auto") {
       auto = true;
+      continue;
+    }
+    if (token === "--model") {
+      model = tokens[++index];
+      if (!model || model.startsWith("--")) throw new Error("--model requires provider/model");
+      continue;
+    }
+    if (token.startsWith("--model=")) {
+      model = token.slice("--model=".length);
+      if (!model) throw new Error("--model requires provider/model");
       continue;
     }
     if (token === "--release") {
@@ -211,7 +269,8 @@ function parseCommandArgs(args: string): ParsedCommandArgs {
   return {
     auto,
     requested: positional.join(" ").trim(),
-    release: pipeline ? { pipeline, ids } : undefined,
+    ...(model ? { model } : {}),
+    ...(pipeline ? { release: { pipeline, ids } } : {}),
   };
 }
 
@@ -219,11 +278,12 @@ async function resolvePlan(
   args: string,
   ctx: ExtensionCommandContext,
   purpose: "exec" | "review" | "loop" = "exec",
-): Promise<{ path: string; auto: boolean; release?: ReleaseRequest }> {
+): Promise<{ path: string; auto: boolean; model?: string; release?: ReleaseRequest }> {
   const parsed = parseCommandArgs(args);
   if (parsed.requested) return {
     path: await resolveRequestedPlan(ctx.cwd, parsed.requested),
     auto: parsed.auto,
+    model: parsed.model,
     release: parsed.release,
   };
 
@@ -233,11 +293,11 @@ async function resolvePlan(
     : purpose === "review"
       ? "no executed plans awaiting review found in docs/plans/"
       : "no active plans found in docs/plans/");
-  if (plans.length === 1) return { path: plans[0], auto: parsed.auto, release: parsed.release };
+  if (plans.length === 1) return { path: plans[0], auto: parsed.auto, model: parsed.model, release: parsed.release };
   const labels = plans.map((path) => relative(ctx.cwd, path));
   const selected = await ctx.ui.select("Select a Ralphex plan", labels);
   if (!selected) throw new Error("plan selection cancelled");
-  return { path: plans[labels.indexOf(selected)], auto: parsed.auto, release: parsed.release };
+  return { path: plans[labels.indexOf(selected)], auto: parsed.auto, model: parsed.model, release: parsed.release };
 }
 
 function parseQuestion(text: string): string | undefined {
@@ -280,6 +340,22 @@ function parseTaskProgress(text: string): TaskProgress | undefined {
   return latest;
 }
 
+function parseTaskSummary(text: string): TaskSummary | undefined {
+  const payload = text.match(SUMMARY_PATTERN)?.[1]?.trim();
+  if (!payload) return undefined;
+  try {
+    const parsed = JSON.parse(payload) as Partial<TaskSummary>;
+    if (typeof parsed.result !== "string" || !parsed.result.trim()) return undefined;
+    return {
+      result: parsed.result.trim(),
+      sideEffects: Array.isArray(parsed.sideEffects) ? parsed.sideEffects.map(String).filter(Boolean) : [],
+      limitations: Array.isArray(parsed.limitations) ? parsed.limitations.map(String).filter(Boolean) : [],
+    };
+  } catch {
+    return undefined;
+  }
+}
+
 function formatTaskProgress(progress: TaskProgress, activity?: string): string {
   const label = progress.stage === "checkbox"
     ? `Checkbox ${progress.index}/${progress.total} · ${progress.text}`
@@ -296,6 +372,17 @@ function workerModel(ctx: ExtensionCommandContext): string | undefined {
   return ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined;
 }
 
+function validateConfiguredModel(ctx: ExtensionCommandContext, value: string, label: string): void {
+  const separator = value.indexOf("/");
+  if (separator < 1 || separator === value.length - 1) throw new Error(`${label} model must use provider/model format: ${value}`);
+  const provider = value.slice(0, separator);
+  const model = value.slice(separator + 1);
+  if (!ctx.modelRegistry.find(provider, model)) throw new Error(`${label} model is unavailable: ${value}`);
+  if (!ctx.modelRegistry.getProviderAuthStatus(provider).configured) {
+    throw new Error(`${label} model provider is not authenticated: ${provider}. Run /login ${provider}.`);
+  }
+}
+
 async function executePlan(
   pi: ExtensionAPI,
   ctx: ExtensionCommandContext,
@@ -304,14 +391,16 @@ async function executePlan(
 ): Promise<ExecResult> {
   const resolved = await resolvePlan(rawArgs, ctx);
   if (resolved.release) throw new Error("--release is supported by /ralphex-review and /ralphex-loop, not /ralphex-exec");
+  if (resolved.model) validateConfiguredModel(ctx, resolved.model, "Execution");
   const progressName = options.progressName ?? "Ralphex exec";
-  const { root, base } = await ensureExecPreflight(ctx, resolved.path);
+  const { root, base } = await ensureExecPreflight(ctx, resolved.path, resolved.auto);
   const original = await readPlan(resolved.path);
   if (!firstIncompleteTask(original)) throw new Error("plan has no incomplete Task checkboxes");
   await writePlan(resolved.path, ensureBaseCommit(original, base));
 
   let completed = 0;
   let questions = 0;
+  const summaries: TaskSummary[] = [];
   while (true) {
     const markdown = await readPlan(resolved.path);
     const task = firstIncompleteTask(markdown);
@@ -330,7 +419,7 @@ async function executePlan(
       const result = await runPiWorker({
         cwd: root,
         prompt: taskPrompt({ planPath: relative(root, resolved.path), task, auto: resolved.auto, retryContext }),
-        model: workerModel(ctx),
+        model: resolved.model ?? workerModel(ctx),
         thinking: ctx.thinkingLevel,
         onText: (text) => {
           const update = parseTaskProgress(text);
@@ -360,6 +449,11 @@ async function executePlan(
       taskDone = result.code === 0 && currentTask?.unchecked === 0 && after !== before && clean;
       if (taskDone) {
         completed++;
+        summaries.push(parseTaskSummary(result.assistantText) ?? {
+          result: task.title,
+          sideEffects: [],
+          limitations: [],
+        });
         ctx.ui.notify(`Task ${task.number} completed`, "info");
         break;
       }
@@ -380,7 +474,177 @@ async function executePlan(
       display: true,
     });
   }
-  return { root, planPath: resolved.path, tasksCompleted: completed };
+  return { root, planPath: resolved.path, tasksCompleted: completed, summaries };
+}
+
+const CYRILLIC_TO_ASCII: Record<string, string> = {
+  а: "a", б: "b", в: "v", г: "g", д: "d", е: "e", ё: "e", ж: "zh", з: "z", и: "i", й: "y",
+  к: "k", л: "l", м: "m", н: "n", о: "o", п: "p", р: "r", с: "s", т: "t", у: "u", ф: "f",
+  х: "h", ц: "ts", ч: "ch", ш: "sh", щ: "sch", ъ: "", ы: "y", ь: "", э: "e", ю: "yu", я: "ya",
+};
+
+function generatedPlanSlug(markdown: string): string {
+  const title = markdown.match(/^#\s+(.+)$/m)?.[1]?.trim() ?? "plan";
+  return [...title.toLowerCase()].map((character) => CYRILLIC_TO_ASCII[character] ?? character).join("")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80)
+    .replace(/-+$/g, "") || "plan";
+}
+
+function validateGeneratedPlan(markdown: string): void {
+  const required = ["Goal", "Context", "Scope", "Implementation Steps", "Validation", "Acceptance Criteria", "Execution Notes"];
+  for (const heading of required) {
+    if (!new RegExp(`^## ${heading}\\s*$`, "m").test(markdown)) {
+      throw new Error(`generated plan is missing ## ${heading}`);
+    }
+  }
+  const tasks = parseTasks(markdown);
+  if (!tasks.length) throw new Error("generated plan has no Task sections");
+  for (let index = 0; index < tasks.length; index++) {
+    if (tasks[index].number !== index + 1) throw new Error("generated plan Task numbers are not sequential");
+    if (tasks[index].unchecked < 1) throw new Error(`generated plan Task ${tasks[index].number} has no unchecked checkboxes`);
+  }
+  const lines = markdown.split("\n");
+  for (let index = 0; index < lines.length; index++) {
+    if (!/^\s*-\s*\[\s\]/.test(lines[index])) continue;
+    if (!tasks.some((task) => index > task.start && index < task.end)) {
+      throw new Error("generated plan has an executable checkbox outside a Task section");
+    }
+  }
+}
+
+function parseGeneratedPlan(output: string): string {
+  const blocked = output.match(PLAN_BLOCKED_PATTERN)?.[1]?.trim();
+  if (blocked) {
+    try {
+      const reason = JSON.parse(blocked)?.reason;
+      throw new Error(`planning blocked: ${reason || blocked}`);
+    } catch (error) {
+      if (error instanceof SyntaxError) throw new Error(`planning blocked: ${blocked}`);
+      throw error;
+    }
+  }
+  const markdown = output.match(GENERATED_PLAN_PATTERN)?.[1]?.trim();
+  if (!markdown) throw new Error("planning worker returned no plan envelope");
+  validateGeneratedPlan(markdown);
+  return `${markdown}\n`;
+}
+
+function dateStamp(date: Date): string {
+  return `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, "0")}${String(date.getDate()).padStart(2, "0")}`;
+}
+
+async function saveGeneratedPlan(root: string, markdown: string, date = new Date()): Promise<string> {
+  const directory = join(root, "docs", "plans");
+  await mkdir(directory, { recursive: true });
+  const stem = `${dateStamp(date)}-${generatedPlanSlug(markdown)}`;
+  for (let suffix = 1; ; suffix++) {
+    const path = join(directory, `${stem}${suffix === 1 ? "" : `-${suffix}`}.md`);
+    try {
+      await writeFile(path, markdown, { encoding: "utf8", flag: "wx" });
+      return path;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    }
+  }
+}
+
+async function runRalphexAuto(pi: ExtensionAPI, ctx: ExtensionCommandContext, rawArgs: string): Promise<void> {
+  const parsed = parseAutoArgs(rawArgs);
+  if (!parsed.request) throw new Error("task is required: /ralphex-auto <task>");
+  const root = await repositoryRoot(ctx.cwd);
+  const config = await resolveModelConfig({
+    root,
+    projectTrusted: ctx.isProjectTrusted(),
+    overrides: { planModel: parsed.planModel, execModel: parsed.execModel },
+  });
+  if (!config.planModel || !config.execModel) throw new Error("planning and execution models are required; run /ralphex-models first");
+  validateConfiguredModel(ctx, config.planModel, "Planning");
+  validateConfiguredModel(ctx, config.execModel, "Execution");
+
+  const dirty = await dirtyPaths(root);
+  if (dirty.length) throw new Error(`ralphex-auto requires a clean worktree before planning:\n${dirty.map((path) => `- ${path}`).join("\n")}`);
+
+  let planPath: string | undefined;
+  let phase = "planning";
+  try {
+    let retryContext: string | undefined;
+    let markdown: string | undefined;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      showProgress(ctx, "Ralphex auto · Planning", attempt ? "Retrying invalid plan…" : "Inspecting project and creating plan…");
+      const result = await runPiWorker({
+        cwd: root,
+        prompt: autonomousPlanPrompt(parsed.request, retryContext),
+        model: config.planModel,
+        thinking: ctx.thinkingLevel,
+        tools: ["read", "grep", "find", "ls"],
+        onText: (text) => showProgress(ctx, "Ralphex auto · Planning", text),
+        onActivity: (text) => showProgress(ctx, "Ralphex auto · Planning", text),
+      });
+      if (result.code === 0) {
+        try {
+          markdown = parseGeneratedPlan(result.assistantText);
+          break;
+        } catch (error) {
+          if (String(error).includes("planning blocked:")) throw error;
+          retryContext = `${errorText(error)}\n${diagnostic(result)}`;
+        }
+      } else {
+        retryContext = diagnostic(result);
+      }
+    }
+    if (!markdown) throw new Error(`planning failed after retry\n${retryContext ?? "unknown planning failure"}`);
+    planPath = await saveGeneratedPlan(root, markdown);
+    ctx.ui.notify(`Plan created: ${relative(root, planPath)}`, "info");
+
+    phase = "execution";
+    const execution = await executePlan(pi, ctx, `--auto --model "${config.execModel}" "${relative(root, planPath)}"`, {
+      announceCompletion: false,
+      progressName: "Ralphex auto",
+    });
+    const finalPlan = await readPlan(planPath);
+    const notes = executionNotes(finalPlan);
+    const results = execution.summaries.map((summary) => `- ${summary.result}`);
+    const planningSideEffects = notes.flatMap((note) => {
+      const value = note.match(/(?:^|;\s*)Side effects:\s*(.+)$/i)?.[1]?.trim();
+      return value && !/^(none|нет|не выявлены)$/i.test(value) ? [value] : [];
+    });
+    const sideEffects = [...planningSideEffects, ...execution.summaries.flatMap((summary) => summary.sideEffects)];
+    const noteLimitations = notes.filter((note) => /^(Assumption|Limitation|Допущение|Ограничение):/i.test(note));
+    const limitations = [...noteLimitations, ...execution.summaries.flatMap((summary) => summary.limitations)];
+    pi.sendMessage({
+      customType: "ralphex",
+      content: [
+        "✓ Ralphex auto completed",
+        "",
+        `Plan model: ${config.planModel}`,
+        `Exec model: ${config.execModel}`,
+        `Plan: ${relative(root, planPath)}`,
+        `Tasks completed: ${execution.tasksCompleted}`,
+        `Task commits: ${execution.tasksCompleted}`,
+        "Validation: passed",
+        "",
+        "Что сделано:",
+        ...(results.length ? results : ["- Выполнены все задачи плана"]),
+        "",
+        "Автономные решения:",
+        ...(notes.length ? notes.map((note) => `- ${note}`) : ["- Материальных автономных решений не зафиксировано"]),
+        "",
+        "Побочные эффекты:",
+        ...(sideEffects.length ? sideEffects.map((item) => `- ${item}`) : ["- Не выявлены"]),
+        "",
+        "Допущения и ограничения:",
+        ...(limitations.length ? limitations.map((item) => `- ${item}`) : ["- Не выявлены"]),
+      ].join("\n"),
+      display: true,
+    });
+  } catch (error) {
+    const resume = planPath ? `\nResume:\n/ralphex-exec --auto --model ${config.execModel} ${relative(root, planPath)}` : "";
+    throw new Error(`✗ Ralphex auto blocked\n\nPhase: ${phase}\nReason: ${errorText(error)}${resume}`);
+  }
 }
 
 async function runClaudeReview(root: string, planPath: string, base: string, previousContext: string): Promise<ReturnType<typeof parseClaudeReview>> {
@@ -714,6 +978,95 @@ async function runReviewCommand(
   });
 }
 
+type ModelConfigScope = "global" | "project";
+
+function parseModelConfigArgs(args: string): { scope?: ModelConfigScope; planModel?: string; execModel?: string } {
+  const tokens = commandTokens(args);
+  let scope: ModelConfigScope | undefined;
+  let planModel: string | undefined;
+  let execModel: string | undefined;
+  for (let index = 0; index < tokens.length; index++) {
+    const token = tokens[index];
+    if (token === "--global" || token === "--project") {
+      const next = token.slice(2) as ModelConfigScope;
+      if (scope && scope !== next) throw new Error("choose either --global or --project");
+      scope = next;
+      continue;
+    }
+    if (token === "--plan" || token === "--exec") {
+      const value = tokens[++index];
+      if (!value || value.startsWith("--")) throw new Error(`${token} requires provider/model`);
+      if (token === "--plan") planModel = value;
+      else execModel = value;
+      continue;
+    }
+    if (token.startsWith("--plan=")) {
+      planModel = token.slice("--plan=".length);
+      if (!planModel) throw new Error("--plan requires provider/model");
+      continue;
+    }
+    if (token.startsWith("--exec=")) {
+      execModel = token.slice("--exec=".length);
+      if (!execModel) throw new Error("--exec requires provider/model");
+      continue;
+    }
+    throw new Error(`unknown /ralphex-models argument: ${token}`);
+  }
+  return { scope, planModel, execModel };
+}
+
+async function selectConfiguredModel(ctx: ExtensionCommandContext, title: string): Promise<string | undefined> {
+  const models = ctx.modelRegistry.getAvailable()
+    .filter((model) => ctx.modelRegistry.getProviderAuthStatus(model.provider).configured)
+    .sort((left, right) => `${left.provider}/${left.id}`.localeCompare(`${right.provider}/${right.id}`));
+  if (!models.length) throw new Error("no authenticated models are available");
+  const options = models.map((model) => `${model.provider}/${model.id} — ${model.name}`);
+  const selected = await ctx.ui.select(title, options);
+  if (!selected) return undefined;
+  const model = models[options.indexOf(selected)];
+  return model ? `${model.provider}/${model.id}` : undefined;
+}
+
+async function configureModels(ctx: ExtensionCommandContext, args: string): Promise<void> {
+  await ctx.waitForIdle();
+  const parsed = parseModelConfigArgs(args);
+  const root = await repositoryRoot(ctx.cwd);
+  let scope = parsed.scope;
+  if (!scope) {
+    const selected = await ctx.ui.select("Save Ralphex models for:", ["Global", "Current project"]);
+    if (!selected) return;
+    scope = selected === "Global" ? "global" : "project";
+  }
+  if (scope === "project" && !ctx.isProjectTrusted()) throw new Error("project model config requires a trusted project");
+
+  const paths = modelConfigPaths(root);
+  const path = paths[scope];
+  const current = await readModelConfig(path);
+  const explicitlySet = Boolean(parsed.planModel || parsed.execModel);
+  let planModel = parsed.planModel;
+  let execModel = parsed.execModel;
+  if (!explicitlySet) {
+    planModel = await selectConfiguredModel(ctx, "Select the Ralphex planning model");
+    if (!planModel) return;
+    execModel = await selectConfiguredModel(ctx, "Select the Ralphex execution model");
+    if (!execModel) return;
+  }
+  if (planModel) validateConfiguredModel(ctx, planModel, "Planning");
+  if (execModel) validateConfiguredModel(ctx, execModel, "Execution");
+
+  const updated: RalphexModelConfig = {
+    ...current,
+    ...(planModel ? { planModel } : {}),
+    ...(execModel ? { execModel } : {}),
+  };
+  await writeModelConfig(path, updated, scope === "global");
+  const effective = await resolveModelConfig({ root, projectTrusted: ctx.isProjectTrusted() });
+  ctx.ui.notify(
+    `Ralphex ${scope} models saved\nPlan: ${effective.planModel ?? "not configured"}\nExec: ${effective.execModel ?? "not configured"}`,
+    "info",
+  );
+}
+
 async function commandBoundary(
   pi: ExtensionAPI,
   ctx: ExtensionCommandContext,
@@ -736,8 +1089,18 @@ async function commandBoundary(
 }
 
 export default function (pi: ExtensionAPI) {
+  pi.registerCommand("ralphex-auto", {
+    description: "Autonomously create and execute a plan without Claude review; supports separate plan and exec models",
+    handler: async (args, ctx) => commandBoundary(pi, ctx, "Ralphex auto", () => runRalphexAuto(pi, ctx, args)),
+  });
+
+  pi.registerCommand("ralphex-models", {
+    description: "Configure global or project planning and execution models for /ralphex-auto",
+    handler: async (args, ctx) => commandBoundary(pi, ctx, "Ralphex models", () => configureModels(ctx, args)),
+  });
+
   pi.registerCommand("ralphex-exec", {
-    description: "Execute plan tasks sequentially in fresh Pi contexts; add --auto for unattended decisions",
+    description: "Execute plan tasks in fresh Pi contexts; supports --auto and --model provider/model",
     handler: async (args, ctx) => commandBoundary(pi, ctx, "Ralphex exec", () => executePlan(pi, ctx, args)),
   });
 
@@ -752,4 +1115,22 @@ export default function (pi: ExtensionAPI) {
   });
 }
 
-export { commitAndPushReleaseChanges, commitCompletedPlanMove, executePlan, formatTaskProgress, moveCompletedPlan, parseCommandArgs, parseTaskProgress, reviewPlan, resolvePlan, resolveRequestedPlan, runLoop };
+export {
+  commitAndPushReleaseChanges,
+  commitCompletedPlanMove,
+  executePlan,
+  formatTaskProgress,
+  moveCompletedPlan,
+  parseAutoArgs,
+  parseCommandArgs,
+  parseGeneratedPlan,
+  parseModelConfigArgs,
+  parseTaskProgress,
+  parseTaskSummary,
+  reviewPlan,
+  resolvePlan,
+  resolveRequestedPlan,
+  runLoop,
+  saveGeneratedPlan,
+  validateGeneratedPlan,
+};

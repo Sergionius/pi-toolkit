@@ -125,6 +125,41 @@ The command does not use subagents, review the plan, implement it, create commit
 /ralphex-plan
 ```
 
+## Autonomous Ralphex planning and execution
+
+Configure separate default models for autonomous planning and execution:
+
+```text
+/ralphex-models
+```
+
+The command selects global or current-project scope and then chooses both models from Pi's authenticated model catalogue. Global defaults are stored without credentials in `${PI_CODING_AGENT_DIR:-~/.pi/agent}/ralphex.json`; trusted-project overrides are stored in `.pi/ralphex.json`. Non-interactive configuration is also supported:
+
+```text
+/ralphex-models --global --plan openai-codex/gpt-5.6-sol --exec zai/glm-5.3-flash
+/ralphex-models --project --exec zai/glm-5.3-flash
+```
+
+Create a plan and execute it immediately without questions, manual acceptance, Claude review, release, or push:
+
+```text
+/ralphex-auto добавь сепараторы на странице localhost:3000/claims/list
+```
+
+One-run model overrides take precedence over project and global settings:
+
+```text
+/ralphex-auto --plan-model openai-codex/gpt-5.6-sol --exec-model zai/glm-5.3-flash добавь сепараторы
+```
+
+The planning worker inspects the repository, chooses safe minimal reversible answers to ordinary ambiguity, records decisions, alternatives, rationale, and side effects under `## Execution Notes`, and saves a validated plan in `docs/plans/`. The existing task-by-task exec workflow then runs with the execution model. Missing or unauthenticated models stop before planning and never fall back silently. The final report lists the models, implementation, validation, autonomous decisions, side effects, assumptions, and limitations. The checked plan remains in `docs/plans/` because review and completed-plan movement are intentionally skipped.
+
+If execution is interrupted, resume with the reported command:
+
+```text
+/ralphex-exec --auto --model zai/glm-5.3-flash docs/plans/YYYYMMDD-feature.md
+```
+
 ## Ralphex execution and review
 
 Execute an accepted plan task by task:
@@ -132,9 +167,10 @@ Execute an accepted plan task by task:
 ```text
 /ralphex-exec docs/plans/YYYYMMDD-feature.md
 /ralphex-exec --auto docs/plans/YYYYMMDD-feature.md
+/ralphex-exec --auto --model zai/glm-5.3-flash docs/plans/YYYYMMDD-feature.md
 ```
 
-Each Task runs in a fresh Pi process. The worker completes exactly one `### Task N:` section, runs the plan's validation (or the project's cheapest existing compile/analyze/typecheck/build check), marks its checkboxes, and creates one `feat: ...` commit containing code plus the updated plan. One fresh retry is allowed. Existing uncommitted changes other than the plan stop execution; running on `main`, `master`, or `trunk` requires confirmation. Interactive mode surfaces material questions, while `--auto` resolves safe engineering decisions from project conventions and records them under `## Execution Notes`.
+Each Task runs in a fresh Pi process. The worker completes exactly one `### Task N:` section, runs the plan's validation (or the project's cheapest existing compile/analyze/typecheck/build check), marks its checkboxes, and creates one `feat: ...` commit containing code plus the updated plan. One fresh retry is allowed. Existing uncommitted changes other than the plan stop execution. Interactive execution requires confirmation on `main`, `master`, or `trunk`; `--auto` treats the explicit unattended invocation as approval to create task commits on the current branch. Interactive mode surfaces material questions, while `--auto` resolves safe engineering decisions from project conventions and records them under `## Execution Notes`.
 
 The first execution stores the pre-task HEAD in an invisible `ralphex-base` comment in the plan. Review uses that exact baseline even when execution happened on the current default branch:
 

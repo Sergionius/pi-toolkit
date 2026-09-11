@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
@@ -10,6 +10,7 @@ import { createJiti } from "jiti";
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const jiti = createJiti(import.meta.url);
 const planModule = await jiti.import(resolve(root, "extensions/ralphex/plan.ts"));
+const modelConfig = await jiti.import(resolve(root, "extensions/ralphex/model-config.ts"));
 const prompts = await jiti.import(resolve(root, "extensions/ralphex/prompts.ts"));
 const ralphex = await jiti.import(resolve(root, "extensions/ralphex/index.ts"));
 
@@ -45,6 +46,113 @@ test("ralphex release arguments support optional and repeated task IDs", () => {
     release: { pipeline: "test", ids: [] },
   });
   assert.throws(() => ralphex.parseCommandArgs("--id BTL-123 feature.md"), /requires --release/);
+});
+
+test("ralphex auto and exec model arguments preserve natural-language requests", () => {
+  assert.deepEqual(
+    ralphex.parseAutoArgs("--plan-model openai/gpt-5.6-sol --exec-model=zai/glm-5.3-flash добавь сепараторы на странице"),
+    {
+      request: "добавь сепараторы на странице",
+      planModel: "openai/gpt-5.6-sol",
+      execModel: "zai/glm-5.3-flash",
+    },
+  );
+  assert.deepEqual(ralphex.parseCommandArgs("--auto --model zai/glm-5.3-flash feature.md"), {
+    auto: true,
+    requested: "feature.md",
+    model: "zai/glm-5.3-flash",
+  });
+  assert.throws(() => ralphex.parseAutoArgs("--plan-model"), /requires provider\/model/);
+  assert.deepEqual(ralphex.parseModelConfigArgs("--project --exec zai/glm-5.3-flash"), {
+    scope: "project",
+    planModel: undefined,
+    execModel: "zai/glm-5.3-flash",
+  });
+});
+
+test("ralphex model config resolves global, project, and one-run precedence", async () => {
+  const temporary = await mkdtemp(join(tmpdir(), "ralphex-models-"));
+  const agent = join(temporary, "agent");
+  const project = join(temporary, "project");
+  try {
+    const paths = modelConfig.modelConfigPaths(project, agent);
+    await modelConfig.writeModelConfig(paths.global, {
+      planModel: "openai/global-plan",
+      execModel: "openai/global-exec",
+    }, true);
+    await modelConfig.writeModelConfig(paths.project, { execModel: "zai/project-exec" });
+
+    assert.deepEqual(await modelConfig.resolveModelConfig({ root: project, projectTrusted: true, agentDir: agent }), {
+      planModel: "openai/global-plan",
+      execModel: "zai/project-exec",
+    });
+    assert.deepEqual(await modelConfig.resolveModelConfig({
+      root: project,
+      projectTrusted: true,
+      agentDir: agent,
+      overrides: { planModel: "openai/one-run" },
+    }), {
+      planModel: "openai/one-run",
+      execModel: "zai/project-exec",
+    });
+    assert.deepEqual(await modelConfig.resolveModelConfig({ root: project, projectTrusted: false, agentDir: agent }), {
+      planModel: "openai/global-plan",
+      execModel: "openai/global-exec",
+    });
+    assert.equal((await stat(paths.global)).mode & 0o777, 0o600);
+  } finally {
+    await rm(temporary, { recursive: true, force: true });
+  }
+});
+
+test("autonomous planning output is strict and saved without overwriting", async () => {
+  const temporary = await mkdtemp(join(tmpdir(), "ralphex-generated-plan-"));
+  const generated = `# Добавить сепараторы
+
+## Goal
+Добавить разделители.
+
+## Context
+Существующий список.
+
+## Scope
+Только UI.
+
+## Implementation Steps
+
+### Task 1: Добавить стили
+
+**Files:**
+- Modify: src/page.ts
+
+- [ ] Добавить сепаратор
+
+## Validation
+npm test
+
+## Acceptance Criteria
+Строки разделены.
+
+## Execution Notes
+- Decision: CSS border; Alternatives: markup; Reason: минимально; Side effects: none
+`;
+  try {
+    assert.equal(
+      ralphex.parseGeneratedPlan(`<<<RALPHEX:PLAN>>>\n${generated}<<<RALPHEX:END>>>`),
+      generated,
+    );
+    const first = await ralphex.saveGeneratedPlan(temporary, generated, new Date(2026, 8, 11));
+    const second = await ralphex.saveGeneratedPlan(temporary, generated, new Date(2026, 8, 11));
+    assert.equal(first, join(temporary, "docs", "plans", "20260911-dobavit-separatory.md"));
+    assert.equal(second, join(temporary, "docs", "plans", "20260911-dobavit-separatory-2.md"));
+    assert.throws(
+      () => ralphex.parseGeneratedPlan("<<<RALPHEX:PLAN_BLOCKED>>>\n{\"reason\":\"credentials required\"}\n<<<RALPHEX:END>>>"),
+      /planning blocked: credentials required/,
+    );
+    assert.throws(() => ralphex.validateGeneratedPlan(generated.replace("### Task 1:", "### Task 2:")), /not sequential/);
+  } finally {
+    await rm(temporary, { recursive: true, force: true });
+  }
 });
 
 test("ralphex commands resolve both full plan paths and bare filenames", async () => {
@@ -300,7 +408,24 @@ test("task prompt enforces one task, validation, commit, and mode-specific ambig
   const auto = prompts.taskPrompt({ planPath: "docs/plans/feature.md", task, auto: true });
   assert.match(auto, /unattended mode/);
   assert.match(auto, /## Execution Notes/);
+  assert.match(auto, /<<<RALPHEX:SUMMARY>>>/);
   assert.doesNotMatch(auto, /<<<RALPHEX:QUESTION>>>/);
+  assert.deepEqual(ralphex.parseTaskSummary(`<<<RALPHEX:SUMMARY>>>
+{"result":"added separators","sideEffects":["spacing changed"],"limitations":[]}
+<<<RALPHEX:END>>>`), {
+    result: "added separators",
+    sideEffects: ["spacing changed"],
+    limitations: [],
+  });
+});
+
+test("autonomous planning prompt forbids questions and implementation mutations", () => {
+  const prompt = prompts.autonomousPlanPrompt("add separators");
+  assert.match(prompt, /Do not ask the user questions/);
+  assert.match(prompt, /Do not modify files, Git state/);
+  assert.match(prompt, /Decision: <choice>; Alternatives:/);
+  assert.match(prompt, /<<<RALPHEX:PLAN>>>/);
+  assert.match(prompt, /review, release, push/);
 });
 
 test("Claude review parser accepts strict JSON and rejects invalid output", () => {
