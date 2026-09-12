@@ -156,13 +156,34 @@ function showProgress(ctx: ExtensionCommandContext, title: string, activity?: st
   ctx.ui.setWidget("ralphex", lines);
 }
 
+function executionBranchName(planPath: string): string {
+  const stem = basename(planPath, ".md").replace(/^(?:\d{8}|\d{4}-\d{2}-\d{2})-/, "");
+  const slug = stem
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, "-")
+    .replace(/^-+|-+$/g, "");
+  if (!slug) throw new Error(`cannot derive execution branch from plan filename: ${basename(planPath)}`);
+  return `ralphex/${slug}`;
+}
+
+async function localBranchExists(root: string, branch: string): Promise<boolean> {
+  const result = await runCommand({
+    command: "git",
+    args: ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`],
+    cwd: root,
+  });
+  if (result.code === 0) return true;
+  if (result.code === 1) return false;
+  throw new Error(`git show-ref failed: ${result.stderr.trim() || result.stdout.trim()}`);
+}
+
 async function ensureExecPreflight(ctx: ExtensionCommandContext, planPath: string, auto = false): Promise<{ root: string; base: string }> {
   const root = await repositoryRoot(ctx.cwd);
   const relativePlan = normalizeRelative(relative(root, planPath));
   if (relativePlan.startsWith("../") || relativePlan === "..") throw new Error("plan must be inside the current Git repository");
 
-  const markdown = await readPlan(planPath);
-  if (!parseTasks(markdown).length) throw new Error("plan has no ### Task N: sections");
+  const initialMarkdown = await readPlan(planPath);
+  if (!parseTasks(initialMarkdown).length) throw new Error("plan has no ### Task N: sections");
 
   const unrelated = (await dirtyPaths(root)).filter((path) => normalizeRelative(path) !== relativePlan);
   if (unrelated.length) {
@@ -171,13 +192,23 @@ async function ensureExecPreflight(ctx: ExtensionCommandContext, planPath: strin
 
   const branch = await git(root, ["branch", "--show-current"]);
   if (["main", "master", "trunk"].includes(branch) && !auto) {
-    const confirmed = await ctx.ui.confirm(
+    const executionBranch = executionBranchName(planPath);
+    const executeHere = `Execute on ${branch}`;
+    const useExecutionBranch = `Create or switch to ${executionBranch}`;
+    const choice = await ctx.ui.select(
       "Run Ralphex on the default branch?",
-      `Current branch is ${branch}. Task commits will be created directly on this branch.`,
+      [executeHere, useExecutionBranch, "Cancel"],
     );
-    if (!confirmed) throw new Error("cancelled on default branch");
+    if (choice === useExecutionBranch) {
+      const exists = await localBranchExists(root, executionBranch);
+      await git(root, exists ? ["switch", executionBranch] : ["switch", "-c", executionBranch]);
+    } else if (choice !== executeHere) {
+      throw new Error("cancelled on default branch");
+    }
   }
 
+  const markdown = await readPlan(planPath);
+  if (!parseTasks(markdown).length) throw new Error("plan has no ### Task N: sections after switching branches");
   return { root, base: baseCommit(markdown) ?? await head(root) };
 }
 
@@ -1330,7 +1361,9 @@ export default function (pi: ExtensionAPI) {
 export {
   commitAndPushReleaseChanges,
   commitCompletedPlanMove,
+  ensureExecPreflight,
   executePlan,
+  executionBranchName,
   formatTaskProgress,
   formatWorkflowStatus,
   moveCompletedPlan,

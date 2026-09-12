@@ -224,6 +224,115 @@ test("ralphex commands resolve both full plan paths and bare filenames", async (
   }
 });
 
+test("ralphex execution branch names come from dated plan filenames", () => {
+  assert.equal(
+    ralphex.executionBranchName("docs/plans/20260912-self-release-pipeline.md"),
+    "ralphex/self-release-pipeline",
+  );
+  assert.equal(
+    ralphex.executionBranchName("docs/plans/2026-09-12-Добавить кеш.md"),
+    "ralphex/добавить-кеш",
+  );
+  assert.throws(
+    () => ralphex.executionBranchName("docs/plans/!!!.md"),
+    /cannot derive execution branch/,
+  );
+});
+
+test("ralphex preflight can create and resume a plan branch from main", async () => {
+  const temporary = await mkdtemp(join(tmpdir(), "ralphex-exec-branch-"));
+  const git = (...args) => execFileSync("git", args, { cwd: temporary, encoding: "utf8" }).trim();
+  try {
+    git("init", "-q");
+    git("config", "user.email", "ralphex@example.test");
+    git("config", "user.name", "Ralphex Test");
+    git("branch", "-M", "main");
+    const repository = git("rev-parse", "--show-toplevel");
+    const plans = join(repository, "docs", "plans");
+    await mkdir(plans, { recursive: true });
+    const plan = join(plans, "20260912-self-release-pipeline.md");
+    await writeFile(plan, sample, "utf8");
+    git("add", ".");
+    git("commit", "-qm", "initial");
+    const initialHead = git("rev-parse", "HEAD");
+
+    const selections = [];
+    const ctx = {
+      cwd: repository,
+      ui: {
+        select: async (title, options) => {
+          selections.push({ title, options });
+          return options[1];
+        },
+      },
+    };
+    const created = await ralphex.ensureExecPreflight(ctx, plan);
+    assert.equal(git("branch", "--show-current"), "ralphex/self-release-pipeline");
+    assert.equal(created.base, initialHead);
+    assert.deepEqual(selections[0], {
+      title: "Run Ralphex on the default branch?",
+      options: [
+        "Execute on main",
+        "Create or switch to ralphex/self-release-pipeline",
+        "Cancel",
+      ],
+    });
+
+    const resumedBase = "abcdef1234567890";
+    await writeFile(plan, planModule.ensureBaseCommit(sample, resumedBase), "utf8");
+    git("add", ".");
+    git("commit", "-qm", "record plan progress");
+    git("switch", "-q", "main");
+
+    const resumed = await ralphex.ensureExecPreflight(ctx, plan);
+    assert.equal(git("branch", "--show-current"), "ralphex/self-release-pipeline");
+    assert.equal(resumed.base, resumedBase, "preflight must reread the plan after switching");
+  } finally {
+    await rm(temporary, { recursive: true, force: true });
+  }
+});
+
+test("ralphex preflight keeps direct, cancel, feature-branch, and auto behavior", async () => {
+  const temporary = await mkdtemp(join(tmpdir(), "ralphex-exec-choice-"));
+  const git = (...args) => execFileSync("git", args, { cwd: temporary, encoding: "utf8" }).trim();
+  try {
+    git("init", "-q");
+    git("config", "user.email", "ralphex@example.test");
+    git("config", "user.name", "Ralphex Test");
+    git("branch", "-M", "main");
+    const repository = git("rev-parse", "--show-toplevel");
+    const plans = join(repository, "docs", "plans");
+    await mkdir(plans, { recursive: true });
+    const plan = join(plans, "20260912-feature.md");
+    await writeFile(plan, sample, "utf8");
+    git("add", ".");
+    git("commit", "-qm", "initial");
+
+    let calls = 0;
+    const directCtx = {
+      cwd: repository,
+      ui: { select: async (_title, options) => { calls++; return options[0]; } },
+    };
+    await ralphex.ensureExecPreflight(directCtx, plan);
+    assert.equal(git("branch", "--show-current"), "main");
+    assert.equal(calls, 1);
+
+    const cancelCtx = { cwd: repository, ui: { select: async () => "Cancel" } };
+    await assert.rejects(() => ralphex.ensureExecPreflight(cancelCtx, plan), /cancelled on default branch/);
+    assert.equal(git("branch", "--show-current"), "main");
+
+    const noPromptCtx = { cwd: repository, ui: { select: async () => { throw new Error("unexpected prompt"); } } };
+    await ralphex.ensureExecPreflight(noPromptCtx, plan, true);
+    assert.equal(git("branch", "--show-current"), "main");
+
+    git("switch", "-qc", "feature/manual");
+    await ralphex.ensureExecPreflight(noPromptCtx, plan);
+    assert.equal(git("branch", "--show-current"), "feature/manual");
+  } finally {
+    await rm(temporary, { recursive: true, force: true });
+  }
+});
+
 test("ralphex-loop discovers both incomplete and review-ready active plans", async () => {
   const temporary = await mkdtemp(join(tmpdir(), "ralphex-loop-select-"));
   try {
