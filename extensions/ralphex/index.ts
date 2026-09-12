@@ -632,7 +632,7 @@ function parseGeneratedPlan(output: string): string {
 }
 
 function dateStamp(date: Date): string {
-  return `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, "0")}${String(date.getDate()).padStart(2, "0")}`;
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
 async function saveGeneratedPlan(root: string, markdown: string, date = new Date()): Promise<string> {

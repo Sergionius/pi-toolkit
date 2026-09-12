@@ -33,9 +33,9 @@ test("saving a proposed plan uses the first free numeric suffix", async () => {
     const second = await plan.saveProposedPlan(cwd, markdown, date);
     const third = await plan.saveProposedPlan(cwd, markdown, date);
 
-    assert.equal(basename(first), "20260830-ekran-profilya.md");
-    assert.equal(basename(second), "20260830-ekran-profilya-2.md");
-    assert.equal(basename(third), "20260830-ekran-profilya-3.md");
+    assert.equal(basename(first), "2026-08-30-ekran-profilya.md");
+    assert.equal(basename(second), "2026-08-30-ekran-profilya-2.md");
+    assert.equal(basename(third), "2026-08-30-ekran-profilya-3.md");
     assert.equal(await readFile(second, "utf8"), `${markdown}\n`);
     assert.doesNotMatch(await readFile(second, "utf8"), /<\/?proposed_plan>/);
   } finally {

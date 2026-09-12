@@ -117,7 +117,7 @@ Invoking `/auto` without a task makes no changes and reports the missing task in
 
 Pi first inspects the relevant project files directly, summarizes the current implementation, and asks only material questions that cannot be answered from the repository. If the implementation has a meaningful architectural choice, it presents alternatives and recommends one. It then shows a complete Markdown draft and revises it until explicitly accepted.
 
-Only after acceptance does Pi create `docs/plans/YYYYMMDD-<slug>.md`. Plans use sequential `### Task N:` sections and executable checkboxes inside those sections. Validation steps are included only when the project already has relevant checks or the user requested them; the workflow does not invent test infrastructure or coverage requirements.
+Only after acceptance does Pi create `docs/plans/yyyy-MM-dd-<slug>.md`. Plans use sequential `### Task N:` sections and executable checkboxes inside those sections. Validation steps are included only when the project already has relevant checks or the user requested them; the workflow does not invent test infrastructure or coverage requirements.
 
 The command does not use subagents, review the plan, implement it, create commits or branches, or start another workflow. If invoked without a description, it prompts for one:
 
@@ -173,7 +173,7 @@ The planning worker inspects the repository, chooses safe minimal reversible ans
 If execution is interrupted, resume with the reported command:
 
 ```text
-/ralphex-exec --auto --model zai/glm-5.3-flash docs/plans/YYYYMMDD-feature.md
+/ralphex-exec --auto --model zai/glm-5.3-flash docs/plans/yyyy-MM-dd-feature.md
 ```
 
 ## Ralphex execution and review
@@ -181,9 +181,9 @@ If execution is interrupted, resume with the reported command:
 Execute an accepted plan task by task:
 
 ```text
-/ralphex-exec docs/plans/YYYYMMDD-feature.md
-/ralphex-exec --auto docs/plans/YYYYMMDD-feature.md
-/ralphex-exec --auto --model zai/glm-5.3-flash docs/plans/YYYYMMDD-feature.md
+/ralphex-exec docs/plans/yyyy-MM-dd-feature.md
+/ralphex-exec --auto docs/plans/yyyy-MM-dd-feature.md
+/ralphex-exec --auto --model zai/glm-5.3-flash docs/plans/yyyy-MM-dd-feature.md
 ```
 
 Each Task runs in a fresh Pi process. The worker completes exactly one `### Task N:` section, runs the plan's validation (or the project's cheapest existing compile/analyze/typecheck/build check), marks its checkboxes, and creates one `feat: ...` commit containing code plus the updated plan. One fresh retry is allowed. Existing uncommitted changes other than the plan stop execution. On `main`, `master`, or `trunk`, interactive execution offers to continue directly, cancel, or create/switch to a `ralphex/<plan-name>` branch; an existing generated branch is reused for resume. `--auto` treats the explicit unattended invocation as approval to create task commits on the current branch. Interactive mode surfaces material questions, while `--auto` resolves safe engineering decisions from project conventions and records them under `## Execution Notes`.
@@ -191,7 +191,7 @@ Each Task runs in a fresh Pi process. The worker completes exactly one `### Task
 The first execution stores the pre-task HEAD in an invisible `ralphex-base` comment in the plan. Review uses that exact baseline even when execution happened on the current default branch:
 
 ```text
-/ralphex-review docs/plans/YYYYMMDD-feature.md
+/ralphex-review docs/plans/yyyy-MM-dd-feature.md
 ```
 
 Review is autonomous: the existing read-only `ask-claude` wrapper reviews the complete diff, a fresh Pi fixer validates every finding and fixes confirmed issues, and Claude reviews again. All severities are considered. There are three normal fix iterations and one final critical/high-only attempt. Fix iterations commit as `fix: address code review findings`. On approval, the plan moves to `docs/plans/completed/` in a `move completed plan: <filename>` commit.
@@ -201,8 +201,8 @@ Review is autonomous: the existing read-only `ask-claude` wrapper reviews the co
 Run both phases as one resumable workflow with:
 
 ```text
-/ralphex-loop YYYYMMDD-feature.md
-/ralphex-loop --auto YYYYMMDD-feature.md
+/ralphex-loop yyyy-MM-dd-feature.md
+/ralphex-loop --auto yyyy-MM-dd-feature.md
 ```
 
 The loop resumes from plan state: it executes remaining Task sections, or skips directly to review when all tasks are checked. With no argument it selects active plans from `docs/plans/`. Internal exec/review completion messages are suppressed; the loop emits one final report, completion sound, and green agterm status only after the whole workflow succeeds. A failure stops the current phase, marks agterm blocked, preserves the working state, and reports the exact resume command. The final report includes task/review counts, validation status, completed plan path, and recorded Execution Notes when present.
@@ -212,9 +212,9 @@ The loop resumes from plan state: it executes remaining Task sections, or skips 
 After successful review, `/ralphex-review` and `/ralphex-loop` can run a non-production CDT pipeline:
 
 ```text
-/ralphex-review --release test YYYYMMDD-feature.md
-/ralphex-review --release test --id BTL-123 YYYYMMDD-feature.md
-/ralphex-loop --auto --release test --id BTL-123 YYYYMMDD-feature.md
+/ralphex-review --release test yyyy-MM-dd-feature.md
+/ralphex-review --release test --id BTL-123 yyyy-MM-dd-feature.md
+/ralphex-loop --auto --release test --id BTL-123 yyyy-MM-dd-feature.md
 ```
 
 `--id` is optional and repeatable. Ralphex verifies `cdt.yaml`, runs CDT pipeline inspect/plan/preflight, rejects every production-like pipeline, starts `cdt agent-release` detached, and waits for its exact run ID for up to 90 minutes. Release failure or timeout does not undo or fail an already completed plan; the final report includes the reason, run ID, status command, and log path.

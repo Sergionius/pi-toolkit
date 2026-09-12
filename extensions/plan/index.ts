@@ -88,7 +88,7 @@ Create an implementation plan for the request below. Work conversationally in th
 4. If there is a meaningful implementation choice, present 2–3 approaches with concrete trade-offs, lead with a recommendation, and ask the user to choose. Skip this when there is one obvious path.
 5. Once the request is decision-complete, show the full Markdown plan as a draft in chat. Do not create or modify any file yet. Explicitly invite the user to accept the draft or give revision feedback.
 6. Revise and show a new complete draft after feedback. Continue until the user explicitly accepts the current draft.
-7. Only after explicit acceptance, check for a matching existing plan under docs/plans/. If one exists, do not overwrite or duplicate it: report its path and stop. Otherwise write the accepted draft to docs/plans/YYYYMMDD-<slug>.md, using the current local date and a short lowercase ASCII kebab-case slug.
+7. Only after explicit acceptance, check for a matching existing plan under docs/plans/. If one exists, do not overwrite or duplicate it: report its path and stop. Otherwise write the accepted draft to docs/plans/yyyy-MM-dd-<slug>.md, using the current local date and a short lowercase ASCII kebab-case slug.
 8. After writing, report only the created plan path and stop. Do not implement it, review it, commit it, create or switch branches, create a worktree, or invoke another workflow.
 
 ## Mutation boundary
@@ -174,7 +174,7 @@ export function planSlug(plan: string): string {
 function localDateStamp(date: Date): string {
   return [date.getFullYear(), date.getMonth() + 1, date.getDate()]
     .map((part, index) => index === 0 ? String(part) : String(part).padStart(2, "0"))
-    .join("");
+    .join("-");
 }
 
 export async function saveProposedPlan(cwd: string, plan: string, date = new Date()): Promise<string> {

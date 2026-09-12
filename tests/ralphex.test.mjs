@@ -197,8 +197,8 @@ npm test
     );
     const first = await ralphex.saveGeneratedPlan(temporary, generated, new Date(2026, 8, 11));
     const second = await ralphex.saveGeneratedPlan(temporary, generated, new Date(2026, 8, 11));
-    assert.equal(first, join(temporary, "docs", "plans", "20260911-dobavit-separatory.md"));
-    assert.equal(second, join(temporary, "docs", "plans", "20260911-dobavit-separatory-2.md"));
+    assert.equal(first, join(temporary, "docs", "plans", "2026-09-11-dobavit-separatory.md"));
+    assert.equal(second, join(temporary, "docs", "plans", "2026-09-11-dobavit-separatory-2.md"));
     assert.throws(
       () => ralphex.parseGeneratedPlan("<<<RALPHEX:PLAN_BLOCKED>>>\n{\"reason\":\"credentials required\"}\n<<<RALPHEX:END>>>"),
       /planning blocked: credentials required/,
