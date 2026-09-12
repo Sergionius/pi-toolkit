@@ -43,21 +43,27 @@ test("Ralphex child-process lifecycle keeps Orca busy across UI prompts", async 
       },
     });
 
+    events.get("ralphex:progress")({ activity: "ignored before start" });
     events.get("ralphex:started")({ name: "Ralphex auto" });
     await delay(10);
+    events.get("ralphex:progress")({ activity: "Task 1 · Validation" });
+    events.get("ralphex:progress")({ activity: "Task 1 · Validation" });
     handlers.get("ui_prompt_end")();
     await delay(80);
     events.get("ralphex:completed")();
+    events.get("ralphex:progress")({ activity: "ignored after completion" });
     await delay(10);
 
     assert.deepEqual(posts.map(({ hook_event_name }) => hook_event_name), [
       "before_agent_start",
       "agent_start",
       "agent_start",
+      "agent_start",
       "agent_end",
     ]);
     assert.equal(posts[0].prompt, "Ralphex auto");
     assert.equal(posts[0].session_id, "session-id");
+    assert.equal(posts[2].prompt, "Task 1 · Validation");
   } finally {
     if (previous.endpoint === undefined) delete process.env.ORCA_AGENT_HOOK_ENDPOINT;
     else process.env.ORCA_AGENT_HOOK_ENDPOINT = previous.endpoint;

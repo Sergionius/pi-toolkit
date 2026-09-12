@@ -156,6 +156,12 @@ function showProgress(ctx: ExtensionCommandContext, title: string, activity?: st
   ctx.ui.setWidget("ralphex", lines);
 }
 
+function reportProgress(pi: ExtensionAPI, ctx: ExtensionCommandContext, title: string, activity?: string): void {
+  showProgress(ctx, title, activity);
+  const compact = activity ? compactActivity(activity) : "";
+  pi.events.emit("ralphex:progress", { activity: compact ? `${title} · ${compact}` : title });
+}
+
 function executionBranchName(planPath: string): string {
   const stem = basename(planPath, ".md").replace(/^(?:\d{8}|\d{4}-\d{2}-\d{2})-/, "");
   const slug = stem
@@ -505,7 +511,7 @@ async function executePlan(
     if (!task) break;
 
     ctx.ui.notify(`Task ${task.number}: ${task.title}`, "info");
-    showProgress(ctx, `${progressName} · Task ${task.number}: ${task.title}`, "Starting fresh Pi worker…");
+    reportProgress(pi, ctx, `${progressName} · Task ${task.number}: ${task.title}`, "Starting fresh Pi worker…");
     let retryContext: string | undefined;
     let failures = 0;
     let taskDone = false;
@@ -521,10 +527,16 @@ async function executePlan(
         thinking: ctx.thinkingLevel,
         onText: (text) => {
           const update = parseTaskProgress(text);
-          if (update) progress = update;
-          showProgress(ctx, progressTitle, progress ? formatTaskProgress(progress) : text);
+          if (update) {
+            const changed = JSON.stringify(update) !== JSON.stringify(progress);
+            progress = update;
+            if (changed) reportProgress(pi, ctx, progressTitle, formatTaskProgress(progress));
+            else showProgress(ctx, progressTitle, formatTaskProgress(progress));
+            return;
+          }
+          showProgress(ctx, progressTitle, text);
         },
-        onActivity: (text) => showProgress(ctx, progressTitle, progress ? formatTaskProgress(progress, text) : text),
+        onActivity: (text) => reportProgress(pi, ctx, progressTitle, progress ? formatTaskProgress(progress, text) : text),
       });
       ctx.ui.setWidget("ralphex", undefined);
 
@@ -680,6 +692,7 @@ function autonomousPlanReport(markdown: string): Pick<AutonomousPlanResult, "dec
 }
 
 async function generateAutonomousPlan(options: {
+  pi?: ExtensionAPI;
   ctx: ExtensionCommandContext;
   root: string;
   request: string;
@@ -694,15 +707,20 @@ async function generateAutonomousPlan(options: {
   let retryContext: string | undefined;
   let markdown: string | undefined;
   for (let attempt = 0; attempt < 2; attempt++) {
-    showProgress(options.ctx, `${options.progressName} · Planning`, attempt ? "Retrying invalid plan…" : "Inspecting project and creating plan…");
+    const progressTitle = `${options.progressName} · Planning`;
+    const startingActivity = attempt ? "Retrying invalid plan…" : "Inspecting project and creating plan…";
+    if (options.pi) reportProgress(options.pi, options.ctx, progressTitle, startingActivity);
+    else showProgress(options.ctx, progressTitle, startingActivity);
     const result = await runPiWorker({
       cwd: options.root,
       prompt: autonomousPlanPrompt(options.request, retryContext),
       model: options.model,
       thinking: options.ctx.thinkingLevel,
       tools: ["read", "grep", "find", "ls"],
-      onText: (text) => showProgress(options.ctx, `${options.progressName} · Planning`, text),
-      onActivity: (text) => showProgress(options.ctx, `${options.progressName} · Planning`, text),
+      onText: (text) => showProgress(options.ctx, progressTitle, text),
+      onActivity: (text) => options.pi
+        ? reportProgress(options.pi, options.ctx, progressTitle, text)
+        : showProgress(options.ctx, progressTitle, text),
     });
     if (result.code === 0) {
       try {
@@ -727,7 +745,7 @@ async function generateAutonomousPlan(options: {
   };
 }
 
-export async function createAutonomousPlan(ctx: ExtensionCommandContext, request: string, model?: string): Promise<AutonomousPlanResult> {
+export async function createAutonomousPlan(ctx: ExtensionCommandContext, request: string, model?: string, pi?: ExtensionAPI): Promise<AutonomousPlanResult> {
   if (!request.trim()) throw new Error("task is required: /ralphex-plan --auto <task>");
   const root = await repositoryRoot(ctx.cwd);
   const config = await resolveModelConfig({
@@ -737,7 +755,7 @@ export async function createAutonomousPlan(ctx: ExtensionCommandContext, request
   });
   if (!config.planModel) throw new Error("planning model is required; run /ralphex-models first or pass --model");
   validateConfiguredModel(ctx, config.planModel, "Planning");
-  return generateAutonomousPlan({ ctx, root, request: request.trim(), model: config.planModel, progressName: "Ralphex plan" });
+  return generateAutonomousPlan({ pi, ctx, root, request: request.trim(), model: config.planModel, progressName: "Ralphex plan" });
 }
 
 async function runRalphexAuto(pi: ExtensionAPI, ctx: ExtensionCommandContext, rawArgs: string): Promise<void> {
@@ -758,6 +776,7 @@ async function runRalphexAuto(pi: ExtensionAPI, ctx: ExtensionCommandContext, ra
   const statusDetail = `plan: ${config.planModel} · exec: ${config.execModel} · auto`;
   try {
     const planned = await generateAutonomousPlan({
+      pi,
       ctx,
       root,
       request: parsed.request,
@@ -844,6 +863,7 @@ async function runFixer(
   planPath: string,
   findings: ClaudeFinding[],
   ctx: ExtensionCommandContext,
+  pi: ExtensionAPI,
   finalCriticalOnly = false,
   progressName = "Ralphex review",
 ): Promise<{ output: string; committed: boolean }> {
@@ -854,7 +874,7 @@ async function runFixer(
     model: workerModel(ctx),
     thinking: ctx.thinkingLevel,
     onText: (text) => showProgress(ctx, `${progressName} · Pi fixer`, text),
-    onActivity: (text) => showProgress(ctx, `${progressName} · Pi fixer`, text),
+    onActivity: (text) => reportProgress(pi, ctx, `${progressName} · Pi fixer`, text),
   });
   ctx.ui.setWidget("ralphex", undefined);
   if (result.code !== 0 || result.assistantText.includes("<<<RALPHEX:FIX_FAILED>>>") || (await dirtyPaths(root)).length) {
@@ -946,9 +966,9 @@ async function reviewPlan(
   while (true) {
     reviewNumber++;
     ctx.ui.notify(`Claude review ${reviewNumber}`, "info");
-    showProgress(ctx, `${progressName} · Claude pass ${reviewNumber}`, "Read-only review in progress…");
+    reportProgress(pi, ctx, `${progressName} · Claude pass ${reviewNumber}`, "Read-only review in progress…");
     const review = await runClaudeReview(root, resolved.path, base, previousContext);
-    showProgress(ctx, `${progressName} · Claude pass ${reviewNumber}`, `${review.findings.length} finding(s): ${review.summary}`);
+    reportProgress(pi, ctx, `${progressName} · Claude pass ${reviewNumber}`, `${review.findings.length} finding(s): ${review.summary}`);
     if (review.verdict === "approve" && review.findings.length === 0) {
       const completedPath = await moveCompletedPlan(root, resolved.path);
       if (options.announceCompletion !== false) {
@@ -965,7 +985,7 @@ async function reviewPlan(
     if (normalFixes < REVIEW_FIX_ITERATIONS) {
       normalFixes++;
       ctx.ui.notify(`Applying confirmed Claude findings (${normalFixes}/${REVIEW_FIX_ITERATIONS})`, "info");
-      const fixerResult = await runFixer(root, resolved.path, review.findings, ctx, false, progressName);
+      const fixerResult = await runFixer(root, resolved.path, review.findings, ctx, pi, false, progressName);
       if (fixerResult.committed) fixCommits++;
       previousContext += `\nClaude review ${reviewNumber}:\n${reviewJson}\nPi fixer:\n${fixerResult.output}\n`;
       continue;
@@ -975,7 +995,7 @@ async function reviewPlan(
     if (!finalFixUsed && blocking.length) {
       finalFixUsed = true;
       ctx.ui.notify("Applying final critical/high review fixes", "warning");
-      const fixerResult = await runFixer(root, resolved.path, blocking, ctx, true, progressName);
+      const fixerResult = await runFixer(root, resolved.path, blocking, ctx, pi, true, progressName);
       if (fixerResult.committed) fixCommits++;
       previousContext += `\nFinal blocking review:\n${reviewJson}\nPi fixer:\n${fixerResult.output}\n`;
       continue;
@@ -1028,18 +1048,19 @@ async function runReleaseAndFinalize(
   root: string,
   request: ReleaseRequest,
   ctx: ExtensionCommandContext,
+  pi: ExtensionAPI,
   progressName: string,
 ): Promise<ReleaseFinalization> {
-  showProgress(ctx, `${progressName} · CDT`, `Preparing ${request.pipeline} release…`);
+  reportProgress(pi, ctx, `${progressName} · CDT`, `Preparing ${request.pipeline} release…`);
   const release = await runCdtRelease({
     cwd: root,
     request,
-    onProgress: (message) => showProgress(ctx, `${progressName} · CDT`, message),
+    onProgress: (message) => reportProgress(pi, ctx, `${progressName} · CDT`, message),
   });
   if (release.status !== "success") {
     return { release, remainingChanges: await dirtyPaths(root) };
   }
-  showProgress(ctx, `${progressName} · Git`, "Committing release changes and pushing…");
+  reportProgress(pi, ctx, `${progressName} · Git`, "Committing release changes and pushing…");
   return commitAndPushReleaseChanges(root, release);
 }
 
@@ -1099,7 +1120,7 @@ async function runLoop(pi: ExtensionAPI, ctx: ExtensionCommandContext, rawArgs: 
     });
     phase = "CDT release";
     const releaseResult = resolved.release
-      ? await runReleaseAndFinalize(root, resolved.release, ctx, "Ralphex loop")
+      ? await runReleaseAndFinalize(root, resolved.release, ctx, pi, "Ralphex loop")
       : undefined;
     const finalMarkdown = await readPlan(reviewResult.planPath);
     const tasks = parseTasks(finalMarkdown).length;
@@ -1137,7 +1158,7 @@ async function runReviewCommand(
     announceCompletion: false,
     progressName: "Ralphex review",
   });
-  const releaseResult = await runReleaseAndFinalize(reviewResult.root, parsed.release, ctx, "Ralphex review");
+  const releaseResult = await runReleaseAndFinalize(reviewResult.root, parsed.release, ctx, pi, "Ralphex review");
   pi.sendMessage({
     customType: "ralphex",
     content: `✓ Ralphex review completed\nClaude review passes: ${reviewResult.reviewPasses}\nPlan: ${relative(reviewResult.root, reviewResult.planPath)}${formatReleaseSummary(releaseResult)}`,
@@ -1375,6 +1396,7 @@ export {
   parseTaskProgress,
   parseTaskSummary,
   reviewPlan,
+  reportProgress,
   resolvePlan,
   resolveRequestedPlan,
   runLoop,

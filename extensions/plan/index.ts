@@ -295,7 +295,7 @@ export async function startAutonomousRalphexPlan(
   pi.events.emit("ralphex:started", { name: "Ralphex plan" });
   try {
     parsed = parsePlanCommandArgs(args);
-    const result = await createPlan(ctx, parsed.request, parsed.model);
+    const result = await createPlan(ctx, parsed.request, parsed.model, pi);
     const content = parsed.json
       ? JSON.stringify(autonomousPlanPayload(result))
       : formatAutonomousPlanResult(result);

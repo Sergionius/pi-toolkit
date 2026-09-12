@@ -38,6 +38,22 @@ test("ralphex workflow status right-aligns model and execution mode", () => {
   assert.ok(status.endsWith("zai/glm-5.3-flash · auto"));
 });
 
+test("ralphex reports concise workflow progress to its UI and event bus", () => {
+  const widgets = [];
+  const events = [];
+  ralphex.reportProgress(
+    { events: { emit: (name, payload) => events.push({ name, payload }) } },
+    { ui: { setWidget: (name, lines) => widgets.push({ name, lines }) } },
+    "Ralphex exec · Task 1",
+    "  Running   validation  ",
+  );
+  assert.deepEqual(widgets, [{ name: "ralphex", lines: ["Ralphex exec · Task 1", "Running validation"] }]);
+  assert.deepEqual(events, [{
+    name: "ralphex:progress",
+    payload: { activity: "Ralphex exec · Task 1 · Running validation" },
+  }]);
+});
+
 test("ralphex release arguments support optional and repeated task IDs", () => {
   assert.deepEqual(
     ralphex.parseCommandArgs("--auto --release test --id BTL-123 --id=BTL-456 feature.md"),

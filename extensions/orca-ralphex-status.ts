@@ -33,6 +33,7 @@ function hookCoordinates(): HookCoordinates {
 
 export default function (pi: ExtensionAPI): void {
   let operationInFlight = false;
+  let lastProgress = "";
   let sessionMetadata: Record<string, string> = {};
   let delivery = Promise.resolve();
 
@@ -79,21 +80,32 @@ export default function (pi: ExtensionAPI): void {
       ...(sessionFile ? { session_file: sessionFile } : {}),
     };
     operationInFlight = false;
+    lastProgress = "";
   });
 
   pi.events.on("ralphex:started", (event: { name?: string } = {}) => {
     operationInFlight = true;
+    lastProgress = "";
     post("before_agent_start", { prompt: event.name || "Ralphex" });
     post("agent_start");
   });
 
+  pi.events.on("ralphex:progress", (event: { activity?: string } = {}) => {
+    const activity = event.activity?.replace(/\s+/g, " ").trim();
+    if (!operationInFlight || !activity || activity === lastProgress) return;
+    lastProgress = activity;
+    post("agent_start", { prompt: activity });
+  });
+
   pi.events.on("ralphex:completed", () => {
     operationInFlight = false;
+    lastProgress = "";
     post("agent_end");
   });
 
   pi.events.on("ralphex:failed", () => {
     operationInFlight = false;
+    lastProgress = "";
     post("agent_end");
   });
 
