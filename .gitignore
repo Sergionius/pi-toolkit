@@ -20,6 +20,9 @@ auth.json.codex-switch.bak
 .dart_tool/
 coverage/
 
+# Maintained as an independent repository in place.
+vscode/pi-flutter-refresh-bridge/
+
 # Local environment and secret files.
 .env
 .env.*
