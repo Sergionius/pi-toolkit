@@ -132,7 +132,6 @@ export async function getDoctorReport(): Promise<{ lines: string[]; healthy: boo
   }
 
   lines.push(`FIGMA_TOKEN: ${process.env.FIGMA_TOKEN ? "set" : "not set (Figma tool unavailable)"}`);
-  lines.push(`AGTERM_SESSION_ID: ${process.env.AGTERM_SESSION_ID ? "set" : "not set (agterm integration inactive)"}`);
   lines.push(`TAX_API_KEY: ${process.env.TAX_API_KEY ? "set" : "not set (Tax package push inactive)"}`);
 
   return { lines, healthy };

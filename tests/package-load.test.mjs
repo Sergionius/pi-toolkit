@@ -9,14 +9,11 @@ import { createJiti } from "jiti";
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const jiti = createJiti(import.meta.url);
 const extensionFiles = [
-  "extensions/agterm-status.ts",
   "extensions/codex-accounts.ts",
   "extensions/codex-status.ts",
   "extensions/commit.ts",
   "extensions/figma-context.ts",
   "extensions/flutter-refresh.ts",
-  "extensions/goal/index.ts",
-  "extensions/notify-sound.ts",
   "extensions/orca-ralphex-status.ts",
   "extensions/plan/index.ts",
   "extensions/provider-switch.ts",
@@ -87,7 +84,6 @@ test("all extension entry points load and register expected commands once", asyn
   }
 
   const expected = [
-    "goal",
     "plan",
     "ralphex-plan",
     "ralphex-auto",
@@ -95,7 +91,6 @@ test("all extension entry points load and register expected commands once", asyn
     "ralphex-exec",
     "ralphex-review",
     "ralphex-loop",
-    "goal-plan",
     "codex-status",
     "commit",
     "codex-account-save",

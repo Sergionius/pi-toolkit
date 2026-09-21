@@ -8,11 +8,9 @@ import {
   extractProposedPlan,
   loadStore,
   rememberProposedPlan,
-  setGoal,
   setPlanMode,
-  saveStore,
   threadId,
-} from "../lib/codex-state";
+} from "../lib/plan-state";
 
 const PLAN_MODE_INSTRUCTIONS = `# Plan Mode (Conversational)
 
@@ -73,8 +71,6 @@ Only output the final plan when decision complete. Wrap the official plan in exa
 The opening and closing tags must be on their own lines and must stay exactly <proposed_plan> and </proposed_plan>. Use Markdown inside. Keep the plan concise by default, with 3–5 short sections. Do not ask “should I proceed?” in the final output. The client/user can choose implementation after the proposed plan is produced.`;
 
 const PLAN_PROMPT = (task: string) => `Plan this request in Plan Mode. Do not modify files or run mutating commands.\n\n${task}`;
-const GOAL_PLAN_PROMPT = (goal: string) => `Plan this future goal in Plan Mode. Do not modify files or run mutating commands. When decision complete, output exactly one <proposed_plan> block and do not ask whether to proceed.\n\nPotential goal:\n${goal}`;
-const GOAL_KICKOFF = (goal: string) => `Plan Mode is now finished. Ignore any earlier Plan Mode / non-mutating-only instructions from the planning turn and execute the approved goal.\n\nPursue the active thread goal:\n${goal}\n\nWork autonomously until the objective is achieved or genuinely blocked. Use get_goal when you need goal state. When achieved, call update_goal with status "complete". Mark "blocked" only after the same blocking condition has recurred for at least three consecutive goal turns.`;
 
 export const RALPHEX_PLAN_INSTRUCTIONS = `# Ralphex implementation plan creation
 
@@ -210,22 +206,9 @@ async function sendPrompt(pi: ExtensionAPI, ctx: ExtensionCommandContext | any, 
 async function implementApprovedPlan(pi: ExtensionAPI, ctx: ExtensionCommandContext | any) {
   const store = loadStore();
   const id = threadId(ctx);
-  const pendingGoal = store.pendingGoalPlan?.[id];
   const planMode = store.planModes?.[id];
 
   setPlanMode(ctx, false);
-
-  if (pendingGoal) {
-    try {
-      const goal = setGoal(ctx, pendingGoal.objective);
-      ctx.ui.notify("Leaving Plan mode; starting goal", "info");
-      await sendPrompt(pi, ctx, GOAL_KICKOFF(goal.objective));
-    } catch (error) {
-      ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
-    }
-    return;
-  }
-
   ctx.ui.notify("Leaving Plan mode; implementing approved plan", "info");
   const prompt = planMode?.lastProposedPlan
     ? `Plan Mode is now finished. Ignore any earlier Plan Mode / non-mutating-only instructions from the planning turn and implement this approved plan:\n\n${planMode.lastProposedPlan}`
@@ -375,42 +358,10 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("input", async (event, ctx) => {
     const text = event.text.trim().toLowerCase();
-    const yes = /^(y|yes|ok|okay|да|ага|подтверждаю|приступай|go|делай|выполняй)[.!\s]*$/i.test(text);
     const implement = /^(implement|implement the plan|приступай|выполняй|делай|давай делай|go|ok|да)[.!\s]*$/i.test(text);
 
     const store = loadStore();
     const id = threadId(ctx);
-
-    if (store.awaitingGoalPlan?.[id]) {
-      const objective = event.text.trim();
-      if (!objective) {
-        ctx.ui.notify("Send the goal text after /goal-plan", "warning");
-        return { action: "handled" };
-      }
-      const now = Math.floor(Date.now() / 1000);
-      delete store.awaitingGoalPlan[id];
-      store.pendingGoalPlan ??= {};
-      store.planModes ??= {};
-      store.pendingGoalPlan[id] = { objective, createdAt: now };
-      store.planModes[id] = { active: true, lastPrompt: objective, updatedAt: now };
-      saveStore(store);
-      ctx.ui.notify("Starting /goal-plan in Plan mode", "info");
-      return { action: "transform", text: GOAL_PLAN_PROMPT(objective) };
-    }
-
-    const pending = store.pendingGoalPlan?.[id];
-    if (yes && pending) {
-      try {
-        const goal = setGoal(ctx, pending.objective);
-        setPlanMode(ctx, false);
-        ctx.ui.notify("Goal started after plan confirmation", "info");
-        return { action: "transform", text: GOAL_KICKOFF(goal.objective) };
-      } catch (error) {
-        ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
-        return { action: "handled" };
-      }
-    }
-
     const planMode = store.planModes?.[id];
     if (planMode?.active && implement && planMode.lastProposedPlan) {
       setPlanMode(ctx, false);
@@ -501,27 +452,4 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
-  pi.registerCommand("goal-plan", {
-    description: "Plan a goal first, then start it after user confirmation",
-    handler: async (args, ctx) => {
-      const objective = args.trim();
-      const store = loadStore();
-      const id = threadId(ctx);
-      const now = Math.floor(Date.now() / 1000);
-      if (!objective) {
-        store.awaitingGoalPlan ??= {};
-        store.awaitingGoalPlan[id] = { createdAt: now };
-        saveStore(store);
-        ctx.ui.notify("/goal-plan enabled. Send the goal text next.", "info");
-        return;
-      }
-      store.pendingGoalPlan ??= {};
-      store.planModes ??= {};
-      store.pendingGoalPlan[id] = { objective, createdAt: now };
-      store.planModes[id] = { active: true, lastPrompt: objective, updatedAt: now };
-      saveStore(store);
-      ctx.ui.notify("Starting /goal-plan in Plan mode", "info");
-      await sendPrompt(pi, ctx, GOAL_PLAN_PROMPT(objective));
-    },
-  });
 }

@@ -6,15 +6,13 @@ Private personal [Pi](https://pi.dev) package containing reusable extensions, pr
 
 ### Extensions
 
-- `plan/` and `goal/` — conversational plan mode, `/ralphex-plan` implementation-plan creation, and autonomous goals. Goal continuations start only after Pi fully settles; model/provider errors pause the goal without consuming an autonomous turn or queuing retries. Resume explicitly with `/goal resume` after service recovery.
-- `agterm-status.ts` — pane-aware agterm lifecycle status integration with persistent completion indicators.
+- `plan/` — conversational plan mode and `/ralphex-plan` implementation-plan creation.
 - `codex-status.ts` — Codex usage and reset-credit commands.
 - `codex-accounts.ts` — local multi-account manager for OpenAI/Codex OAuth profiles.
 - `provider-switch.ts` — confirmed default-provider switching between Codex and Kimi with remembered models.
 - `commit.ts` — global `/commit` command: stages all changes and creates a local commit using the model configured by `PI_COMMIT_MODEL`, without pushing.
 - `figma-context.ts` — `figma_get_screen_context` tool.
 - `flutter-refresh.ts` — automatic Flutter reload/restart after successful edits.
-- `notify-sound.ts` — completion sound without routine visual noise.
 - `toolkit.ts` — toolkit diagnostics and VS Code bridge synchronization.
 
 ### Prompt templates
@@ -84,9 +82,6 @@ Features are enabled by environment variables; values are never stored in this r
 
 - `FIGMA_TOKEN` — Figma API access.
 - `PI_COMMIT_MODEL` — required model for `/commit`, for example `zai/glm-5.3-flash`.
-- `AGTERM_SESSION_ID`, `AGTERM_SOCKET`, `AGTERM_PANE`, and `AGTERM_PANE_ID` — supplied by agterm and used to target the exact session and pane.
-- `AGTERM_AGENT_STATUS_DISABLED=1` — disables agterm status reporting.
-- `PI_AGTERM_COMPLETED_MODE=auto-reset` — restores agterm's one-shot completion behavior. By default, completed glyphs remain until you interact with that session or the agent starts again.
 - `TAX_API_KEY` and `TAX_SERVER` — consumed by the separate Tax package.
 - `PI_FLUTTER_REFRESH_DISABLED=1` — disables automatic Flutter refresh.
 - `PI_FLUTTER_REFRESH_TIMEOUT_SECONDS` — bridge response timeout, default `10`.
@@ -206,7 +201,7 @@ Run both phases as one resumable workflow with:
 /ralphex-loop --auto yyyy-MM-dd-feature.md
 ```
 
-The loop resumes from plan state: it executes remaining Task sections, or skips directly to review when all tasks are checked. With no argument it selects active plans from `docs/plans/`. Internal exec/review completion messages are suppressed; the loop emits one final report, completion sound, and green agterm status only after the whole workflow succeeds. A failure stops the current phase, marks agterm blocked, preserves the working state, and reports the exact resume command. The final report includes task/review counts, validation status, completed plan path, and recorded Execution Notes when present.
+The loop resumes from plan state: it executes remaining Task sections, or skips directly to review when all tasks are checked. With no argument it selects active plans from `docs/plans/`. Internal exec/review completion messages are suppressed; the loop emits one final report after the whole workflow succeeds. A failure stops the current phase, preserves the working state, and reports the exact resume command. The final report includes task/review counts, validation status, completed plan path, and recorded Execution Notes when present.
 
 ### Optional CDT test release
 
@@ -308,12 +303,6 @@ Then switch the default provider with:
 Without an argument, the command toggles between Codex and Kimi. It remembers the last model used for each provider, asks before changing `settings.json`, and exits only after confirmation. Resume the session with `pi -c`.
 
 Provider/model state is stored without credentials in `${PI_CODING_AGENT_DIR:-~/.pi/agent}/provider-switch.json`. The latest pre-switch settings backup is `settings.json.provider-switch.bak`. Use `/codex-account-switch` separately when changing the active Codex OAuth account.
-
-## agterm status
-
-The extension reports `active --blink` on `agent_start` and `completed` on `agent_settled`, after retries, compaction retries, and queued continuations finish. Completion is sticky by default, so switching to another agterm session does not remove the completed glyph from the first one. Typing in the completed session or starting another Pi turn clears/replaces it through agterm's normal status behavior.
-
-The integration uses `agtermctl` for status and forwards agterm's socket, pane role, and stable pane ID. After a successful completion it emits an OSC 9 notification from the originating terminal pane. Agterm then applies its native focus rules: a background app or pane gets a `+1` unseen badge, focusing it clears the badge, and a completion already visible in the focused pane does not leave a stale `+1`. The extension also clears `+1` through `session seen` on the first subsequent Pi keystroke, matching the input-driven clearing of the green completion glyph.
 
 ## Flutter refresh
 
