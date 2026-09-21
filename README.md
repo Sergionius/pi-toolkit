@@ -11,7 +11,7 @@ Private personal [Pi](https://pi.dev) package containing reusable extensions, pr
 - `codex-status.ts` — Codex usage and reset-credit commands.
 - `codex-accounts.ts` — local multi-account manager for OpenAI/Codex OAuth profiles.
 - `provider-switch.ts` — confirmed default-provider switching between Codex and Kimi with remembered models.
-- `commit.ts` — global `/commit` command: stages all changes and creates a local commit using a GPT Luna message, without pushing.
+- `commit.ts` — global `/commit` command: stages all changes and creates a local commit using the model configured by `PI_COMMIT_MODEL`, without pushing.
 - `figma-context.ts` — `figma_get_screen_context` tool.
 - `flutter-refresh.ts` — automatic Flutter reload/restart after successful edits.
 - `notify-sound.ts` — completion sound without routine visual noise.
@@ -68,7 +68,7 @@ Create a local commit from any Git repository:
 /commit
 ```
 
-The command runs `git add .` from the repository root, asks a separate ephemeral `openai-codex/gpt-5.6-luna` Pi process with low reasoning for a validated Conventional Commit message, and runs `git commit`. It never pushes.
+The command runs `git add .` from the repository root, asks a separate ephemeral Pi process using the required `PI_COMMIT_MODEL` environment variable with low reasoning for a validated Conventional Commit message, and runs `git commit`. It never pushes. For example: `export PI_COMMIT_MODEL="zai/glm-5.3-flash"`.
 
 ## Update
 
@@ -83,6 +83,7 @@ After an update that changes the VS Code bridge, run `/reload`, `/pi-toolkit-syn
 Features are enabled by environment variables; values are never stored in this repository:
 
 - `FIGMA_TOKEN` — Figma API access.
+- `PI_COMMIT_MODEL` — required model for `/commit`, for example `zai/glm-5.3-flash`.
 - `AGTERM_SESSION_ID`, `AGTERM_SOCKET`, `AGTERM_PANE`, and `AGTERM_PANE_ID` — supplied by agterm and used to target the exact session and pane.
 - `AGTERM_AGENT_STATUS_DISABLED=1` — disables agterm status reporting.
 - `PI_AGTERM_COMPLETED_MODE=auto-reset` — restores agterm's one-shot completion behavior. By default, completed glyphs remain until you interact with that session or the agent starts again.

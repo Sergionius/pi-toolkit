@@ -32,6 +32,12 @@ async function git(cwd, ...args) {
   return result.stdout.trim();
 }
 
+test("getCommitModel requires PI_COMMIT_MODEL", () => {
+  assert.equal(commitExtension.getCommitModel({ PI_COMMIT_MODEL: " zai/glm-5.3-flash " }), "zai/glm-5.3-flash");
+  assert.throws(() => commitExtension.getCommitModel({}), /PI_COMMIT_MODEL is required/);
+  assert.throws(() => commitExtension.getCommitModel({ PI_COMMIT_MODEL: "   " }), /PI_COMMIT_MODEL is required/);
+});
+
 test("cleanCommitMessage validates a single Conventional Commit line", () => {
   assert.equal(commitExtension.cleanCommitMessage("feat(core): add commit command\n"), "feat(core): add commit command");
   assert.equal(commitExtension.cleanCommitMessage("```\nfix: handle failure\n```"), "fix: handle failure");
