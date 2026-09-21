@@ -9,7 +9,6 @@ Private personal [Pi](https://pi.dev) package containing reusable extensions, pr
 - `plan/` — conversational plan mode and `/ralphex-plan` implementation-plan creation.
 - `codex-status.ts` — Codex usage and reset-credit commands.
 - `codex-accounts.ts` — local multi-account manager for OpenAI/Codex OAuth profiles.
-- `provider-switch.ts` — confirmed default-provider switching between Codex and Kimi with remembered models.
 - `commit.ts` — global `/commit` command: stages all changes and creates a local commit using the model configured by `PI_COMMIT_MODEL`, without pushing.
 - `figma-context.ts` — `figma_get_screen_context` tool.
 - `flutter-refresh.ts` — automatic Flutter reload/restart after successful edits.
@@ -283,26 +282,6 @@ chmod 600 "${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/auth.json"
 ```
 
 Restart Pi after recovery. Profile names may contain only letters, digits, `_`, and `-`.
-
-## Codex and Kimi provider switching
-
-Configure the built-in Kimi For Coding provider once and choose API-key authentication:
-
-```text
-/login kimi-coding
-```
-
-Then switch the default provider with:
-
-```text
-/provider-switch
-/provider-switch codex
-/provider-switch kimi
-```
-
-Without an argument, the command toggles between Codex and Kimi. It remembers the last model used for each provider, asks before changing `settings.json`, and exits only after confirmation. Resume the session with `pi -c`.
-
-Provider/model state is stored without credentials in `${PI_CODING_AGENT_DIR:-~/.pi/agent}/provider-switch.json`. The latest pre-switch settings backup is `settings.json.provider-switch.bak`. Use `/codex-account-switch` separately when changing the active Codex OAuth account.
 
 ## Flutter refresh
 

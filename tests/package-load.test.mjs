@@ -16,7 +16,6 @@ const extensionFiles = [
   "extensions/flutter-refresh.ts",
   "extensions/orca-ralphex-status.ts",
   "extensions/plan/index.ts",
-  "extensions/provider-switch.ts",
   "extensions/ralphex/index.ts",
   "extensions/toolkit.ts",
 ];
@@ -98,7 +97,6 @@ test("all extension entry points load and register expected commands once", asyn
     "codex-account-current",
     "codex-account-switch",
     "codex-account-remove",
-    "provider-switch",
     "pi-toolkit-doctor",
   ];
   for (const command of expected) {
