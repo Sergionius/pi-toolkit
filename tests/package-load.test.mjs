@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
@@ -136,13 +136,48 @@ test("ralphex-plan starts an isolated planning workflow from command arguments",
   const prompt = pi.userMessages[0].message;
   assert.match(prompt, /добавить кеширование API/);
   assert.match(prompt, /Do not launch subagents/);
-  assert.match(prompt, /Do not create or modify any file yet/);
-  assert.match(prompt, /Only after explicit acceptance/);
+  assert.match(prompt, /Do not create or modify any file/);
+  assert.match(prompt, /<ralphex_plan>/);
+  assert.match(prompt, /Never save the plan yourself/);
   assert.match(prompt, /do not implement the requested feature/i);
   assert.match(prompt, /Do not invent a test framework, mandatory tests, coverage targets/);
   assert.doesNotMatch(prompt, /every task MUST include.*tests/i);
   assert.doesNotMatch(prompt, /launch.*review.*agent/i);
   assert.deepEqual(notifications, [{ message: "Starting /ralphex-plan", level: "info" }]);
+});
+
+test("ralphex-plan saves a selected draft directly without another model turn", async () => {
+  const temporary = await mkdtemp(join(tmpdir(), "ralphex-plan-direct-save-"));
+  try {
+    const pi = fakePi();
+    const imported = await jiti.import(join(root, "extensions", "plan", "index.ts"));
+    await imported.default(pi.api);
+    const notifications = [];
+    const ctx = {
+      cwd: temporary,
+      hasUI: true,
+      sessionManager: { getSessionFile: () => join(temporary, "session.jsonl") },
+      waitForIdle: async () => {},
+      isIdle: () => true,
+      ui: {
+        notify: (message, level) => notifications.push({ message, level }),
+        select: async () => "Save plan",
+      },
+    };
+    await imported.startRalphexPlan(pi.api, ctx, "add caching");
+    const handler = pi.handlers.find(({ event }) => event === "agent_end").handler;
+    await handler({
+      messages: [{ role: "assistant", content: "<ralphex_plan>\n# Cache API\n\n## Goal\nAdd caching.\n</ralphex_plan>" }],
+    }, ctx);
+
+    assert.equal(pi.userMessages.length, 1, "saving must not send an acceptance turn to the model");
+    const files = await readdir(join(temporary, "docs", "plans"));
+    assert.equal(files.length, 1);
+    assert.match(files[0], /^\d{4}-\d{2}-\d{2}-cache-api\.md$/);
+    assert.match(notifications.at(-1).message, /^Plan saved to docs\/plans\//);
+  } finally {
+    await rm(temporary, { recursive: true, force: true });
+  }
 });
 
 test("ralphex-plan autonomous JSON mode reports saved decisions without executing", async () => {

@@ -110,9 +110,9 @@ Invoking `/auto` without a task makes no changes and reports the missing task in
 /ralphex-plan add response caching to the API client
 ```
 
-Pi first inspects the relevant project files directly, summarizes the current implementation, and asks only material questions that cannot be answered from the repository. If the implementation has a meaningful architectural choice, it presents alternatives and recommends one. It then shows a complete Markdown draft and revises it until explicitly accepted.
+Pi first inspects the relevant project files directly, summarizes the current implementation, and asks only material questions that cannot be answered from the repository. If the implementation has a meaningful architectural choice, it presents alternatives and recommends one. It then shows a complete Markdown draft with a **Save plan / Continue editing / Cancel** menu.
 
-Only after acceptance does Pi create `docs/plans/yyyy-MM-dd-<slug>.md`. Plans use sequential `### Task N:` sections and executable checkboxes inside those sections. Validation steps are included only when the project already has relevant checks or the user requested them; the workflow does not invent test infrastructure or coverage requirements.
+Choosing **Save plan** creates `docs/plans/yyyy-MM-dd-<slug>.md` directly without another model turn. An exact existing plan is reused, while filename collisions with different content receive a numeric suffix. Plans use sequential `### Task N:` sections and executable checkboxes inside those sections. Validation steps are included only when the project already has relevant checks or the user requested them; the workflow does not invent test infrastructure or coverage requirements.
 
 The command does not use subagents, review the plan, implement it, create commits or branches, or start another workflow. If invoked without a description, it prompts for one:
 
@@ -181,7 +181,7 @@ Execute an accepted plan task by task:
 /ralphex-exec --auto --model zai/glm-5.3-flash docs/plans/yyyy-MM-dd-feature.md
 ```
 
-Each Task runs in a fresh Pi process. The worker completes exactly one `### Task N:` section, runs the plan's validation (or the project's cheapest existing compile/analyze/typecheck/build check), marks its checkboxes, and creates one `feat: ...` commit containing code plus the updated plan. One fresh retry is allowed. Existing uncommitted changes other than the plan stop execution. On `main`, `master`, or `trunk`, interactive execution offers to continue directly, cancel, or create/switch to a `ralphex/<plan-name>` branch; an existing generated branch is reused for resume. `--auto` treats the explicit unattended invocation as approval to create task commits on the current branch. Interactive mode surfaces material questions, while `--auto` resolves safe engineering decisions from project conventions and records them under `## Execution Notes`.
+Each Task runs in a fresh Pi process. The worker completes exactly one `### Task N:` section, runs the plan's validation (or the project's cheapest existing compile/analyze/typecheck/build check), marks its checkboxes, and creates one `feat: ...` commit containing code plus the updated plan. One fresh retry is allowed. Existing uncommitted changes other than the plan stop execution. On `main`, `master`, or `trunk`, interactive execution offers to continue directly, cancel, or create/switch to a `ralphex/<plan-name>` branch; an existing generated branch is reused for resume. `--auto` treats the explicit unattended invocation as approval to create task commits on the current branch. Interactive mode surfaces material questions, while `--auto` resolves safe engineering decisions from project conventions and records them under `## Execution Notes`. Final success and failure reports include total elapsed time; `/ralphex-auto` reports planning and execution together.
 
 The first execution stores the pre-task HEAD in an invisible `ralphex-base` comment in the plan. Review uses that exact baseline even when execution happened on the current default branch:
 

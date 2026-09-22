@@ -43,11 +43,36 @@ test("saving a proposed plan uses the first free numeric suffix", async () => {
   }
 });
 
-test("Ralphex rewrite receives the existing draft and keeps acceptance workflow", () => {
+test("Ralphex draft extraction and saving reuse exact plans without overwriting collisions", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "pi-ralphex-save-"));
+  try {
+    const firstDraft = "# Cache API\n\n## Goal\nAdd caching.";
+    const secondDraft = "# Cache API\n\n## Goal\nUse a different cache.";
+    assert.equal(
+      plan.extractRalphexDraft(`Before\n<ralphex_plan>\n${firstDraft}\n</ralphex_plan>\nAfter`),
+      firstDraft,
+    );
+
+    const first = await plan.saveRalphexDraft(cwd, firstDraft, new Date(2026, 8, 22));
+    const duplicate = await plan.saveRalphexDraft(cwd, `\n${firstDraft}\n`, new Date(2026, 8, 22));
+    const collision = await plan.saveRalphexDraft(cwd, secondDraft, new Date(2026, 8, 22));
+
+    assert.equal(basename(first.path), "2026-09-22-cache-api.md");
+    assert.equal(first.created, true);
+    assert.deepEqual(duplicate, { path: first.path, created: false });
+    assert.equal(basename(collision.path), "2026-09-22-cache-api-2.md");
+    assert.equal(collision.created, true);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("Ralphex rewrite receives the existing draft and keeps client-side acceptance", () => {
   const prompt = plan.buildRalphexRewritePrompt("# Cache API\n\n## Summary\nAdd caching.");
   assert.match(prompt, /Rewrite the following Codex Plan Mode draft/);
   assert.match(prompt, /# Cache API/);
   assert.match(prompt, /verify it against the repository/);
-  assert.match(prompt, /Only after explicit acceptance/);
+  assert.match(prompt, /<ralphex_plan>/);
+  assert.match(prompt, /Never save the plan yourself/);
   assert.match(prompt, /do not implement it/i);
 });

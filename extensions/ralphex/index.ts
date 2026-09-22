@@ -23,6 +23,7 @@ type WorkflowOptions = {
   announceCompletion?: boolean;
   progressName?: string;
   statusDetail?: string;
+  startedAt?: number;
 };
 
 type TaskSummary = {
@@ -92,6 +93,20 @@ type ReviewResult = {
 
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+export function formatDuration(milliseconds: number): string {
+  const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours) return `${hours} ч ${String(minutes).padStart(2, "0")} мин ${String(seconds).padStart(2, "0")} сек`;
+  if (minutes) return `${minutes} мин ${String(seconds).padStart(2, "0")} сек`;
+  return `${seconds} сек`;
+}
+
+function durationLine(startedAt: number, now = performance.now()): string {
+  return `Время: ${formatDuration(now - startedAt)}`;
 }
 
 async function git(cwd: string, args: string[], allowFailure = false): Promise<string> {
@@ -580,7 +595,7 @@ async function executePlan(
   if (options.announceCompletion !== false) {
     pi.sendMessage({
       customType: "ralphex",
-      content: `✓ Ralphex exec completed\nTasks: ${completed}\nPlan: ${relative(root, resolved.path)}\nNext: /ralphex-review ${relative(root, resolved.path)}`,
+      content: `✓ Ralphex exec completed\nTasks: ${completed}\nPlan: ${relative(root, resolved.path)}\n${options.startedAt === undefined ? "" : `${durationLine(options.startedAt)}\n`}Next: /ralphex-review ${relative(root, resolved.path)}`,
       display: true,
     });
   }
@@ -758,7 +773,12 @@ export async function createAutonomousPlan(ctx: ExtensionCommandContext, request
   return generateAutonomousPlan({ pi, ctx, root, request: request.trim(), model: config.planModel, progressName: "Ralphex plan" });
 }
 
-async function runRalphexAuto(pi: ExtensionAPI, ctx: ExtensionCommandContext, rawArgs: string): Promise<void> {
+async function runRalphexAuto(
+  pi: ExtensionAPI,
+  ctx: ExtensionCommandContext,
+  rawArgs: string,
+  startedAt = performance.now(),
+): Promise<void> {
   const parsed = parseAutoArgs(rawArgs);
   if (!parsed.request) throw new Error("task is required: /ralphex-auto <task>");
   const root = await repositoryRoot(ctx.cwd);
@@ -812,6 +832,7 @@ async function runRalphexAuto(pi: ExtensionAPI, ctx: ExtensionCommandContext, ra
         `Tasks completed: ${execution.tasksCompleted}`,
         `Task commits: ${execution.tasksCompleted}`,
         "Validation: passed",
+        durationLine(startedAt),
         "",
         "Что сделано:",
         ...(results.length ? results : ["- Выполнены все задачи плана"]),
@@ -1335,16 +1356,19 @@ async function commandBoundary(
   pi: ExtensionAPI,
   ctx: ExtensionCommandContext,
   name: string,
-  operation: () => Promise<void>,
+  operation: (startedAt: number) => Promise<void>,
+  reportDuration = false,
 ): Promise<void> {
+  const startedAt = performance.now();
   setRalphexStatus(ctx, name);
   pi.events.emit("ralphex:started", { name });
   try {
-    await operation();
+    await operation(startedAt);
     pi.events.emit("ralphex:completed", { name });
   } catch (error) {
     ctx.ui.setWidget("ralphex", undefined);
-    ctx.ui.notify(`${name} failed: ${errorText(error)}`, "error");
+    const elapsed = reportDuration ? `\n${durationLine(startedAt)}` : "";
+    ctx.ui.notify(`${name} failed: ${errorText(error)}${elapsed}`, "error");
     pi.events.emit("ralphex:failed", { name, error: errorText(error) });
   } finally {
     ctx.ui.setWidget("ralphex", undefined);
@@ -1355,7 +1379,13 @@ async function commandBoundary(
 export default function (pi: ExtensionAPI) {
   pi.registerCommand("ralphex-auto", {
     description: "Autonomously create and execute a plan without Claude review; supports separate plan and exec models",
-    handler: async (args, ctx) => commandBoundary(pi, ctx, "Ralphex auto", () => runRalphexAuto(pi, ctx, args)),
+    handler: async (args, ctx) => commandBoundary(
+      pi,
+      ctx,
+      "Ralphex auto",
+      (startedAt) => runRalphexAuto(pi, ctx, args, startedAt),
+      true,
+    ),
   });
 
   pi.registerCommand("ralphex-models", {
@@ -1365,7 +1395,13 @@ export default function (pi: ExtensionAPI) {
 
   pi.registerCommand("ralphex-exec", {
     description: "Execute plan tasks in fresh Pi contexts; supports --auto and --model provider/model",
-    handler: async (args, ctx) => commandBoundary(pi, ctx, "Ralphex exec", () => executePlan(pi, ctx, args)),
+    handler: async (args, ctx) => commandBoundary(
+      pi,
+      ctx,
+      "Ralphex exec",
+      (startedAt) => executePlan(pi, ctx, args, { startedAt }),
+      true,
+    ),
   });
 
   pi.registerCommand("ralphex-review", {

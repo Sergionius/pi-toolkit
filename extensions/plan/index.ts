@@ -1,5 +1,5 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { Type } from "typebox";
 import { createAutonomousPlan, parsePlanCommandArgs, type AutonomousPlanResult } from "../ralphex/index";
@@ -82,14 +82,14 @@ Create an implementation plan for the request below. Work conversationally in th
 2. Briefly summarize what you found: the current flow, likely affected files, constraints, and remaining ambiguity.
 3. Ask only questions that materially affect behavior, scope, compatibility, interfaces, or architecture and cannot be answered from the repository. Ask exactly one question at a time. Do not ask about a testing preference.
 4. If there is a meaningful implementation choice, present 2–3 approaches with concrete trade-offs, lead with a recommendation, and ask the user to choose. Skip this when there is one obvious path.
-5. Once the request is decision-complete, show the full Markdown plan as a draft in chat. Do not create or modify any file yet. Explicitly invite the user to accept the draft or give revision feedback.
-6. Revise and show a new complete draft after feedback. Continue until the user explicitly accepts the current draft.
-7. Only after explicit acceptance, check for a matching existing plan under docs/plans/. If one exists, do not overwrite or duplicate it: report its path and stop. Otherwise write the accepted draft to docs/plans/yyyy-MM-dd-<slug>.md, using the current local date and a short lowercase ASCII kebab-case slug.
-8. After writing, report only the created plan path and stop. Do not implement it, review it, commit it, create or switch branches, create a worktree, or invoke another workflow.
+5. Once the request is decision-complete, show the full Markdown plan as a draft in chat. Wrap the complete draft in exactly one <ralphex_plan> block, with the opening and closing tags on their own lines. Do not create or modify any file. The client will ask the user whether to save or continue editing.
+6. After revision feedback, show a new complete <ralphex_plan> draft. Continue until the client saves or cancels the workflow.
+7. Never save the plan yourself and never ask the user to confirm it in a separate message. The client performs accepted-plan duplicate checking and file creation without another model turn.
+8. Do not implement the plan, review it, commit it, create or switch branches, create a worktree, or invoke another workflow.
 
 ## Mutation boundary
 
-Before explicit acceptance, use only non-mutating exploration. Do not call edit or write, and do not run commands that modify project files or Git state. After acceptance, the only allowed project mutation is creating the single plan file (and its docs/plans directory when absent).
+Use only non-mutating exploration. Do not call edit or write, and do not run commands that modify project files or Git state. The client, not the model, owns accepted-plan file creation.
 
 ## Plan format
 
@@ -136,7 +136,7 @@ A short, observable list of conditions proving the requested behavior is complet
 - Use exact file paths when they can be discovered. Clearly identify any path that can only be resolved during implementation.
 - Do not add plan review, code review, deployment, release, commit, branch, worktree, rebase, squash, push, or merge steps.
 - Do not propose implementing anything after the plan is created.
-- Do not wrap the draft in <proposed_plan> tags; present it as ordinary Markdown so this workflow remains separate from Codex Plan Mode.`;
+- Do not use <proposed_plan> tags. Wrap only complete Ralphex drafts in the required <ralphex_plan> block so this workflow remains separate from Codex Plan Mode.`;
 
 export function buildRalphexPlanPrompt(request: string) {
   return `${RALPHEX_PLAN_INSTRUCTIONS}\n\n## User request\n\n${request.trim()}`;
@@ -148,6 +148,18 @@ export const PLAN_COMPLETION_CHOICES = [
   "No, rewrite plan in ralphex mode",
   "No, stay in Plan mode",
 ] as const;
+
+export const RALPHEX_DRAFT_CHOICES = [
+  "Save plan",
+  "Continue editing",
+  "Cancel",
+] as const;
+
+const activeRalphexPlans = new Set<string>();
+
+export function extractRalphexDraft(text: string): string | undefined {
+  return text.match(/<ralphex_plan>\s*([\s\S]*?)\s*<\/ralphex_plan>/i)?.[1]?.trim();
+}
 
 const CYRILLIC_TO_ASCII: Record<string, string> = {
   а: "a", б: "b", в: "v", г: "g", д: "d", е: "e", ё: "e", ж: "zh", з: "z", и: "i", й: "y",
@@ -188,6 +200,36 @@ export async function saveProposedPlan(cwd: string, plan: string, date = new Dat
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
     }
   }
+}
+
+async function markdownFiles(directory: string): Promise<string[]> {
+  let entries;
+  try {
+    entries = await readdir(directory, { withFileTypes: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  }
+  const files: string[] = [];
+  for (const entry of entries) {
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) files.push(...await markdownFiles(path));
+    else if (entry.isFile() && entry.name.endsWith(".md")) files.push(path);
+  }
+  return files;
+}
+
+export async function saveRalphexDraft(
+  cwd: string,
+  plan: string,
+  date = new Date(),
+): Promise<{ path: string; created: boolean }> {
+  const normalized = plan.trim();
+  const directory = join(cwd, "docs", "plans");
+  for (const path of await markdownFiles(directory)) {
+    if ((await readFile(path, "utf8")).trim() === normalized) return { path, created: false };
+  }
+  return { path: await saveProposedPlan(cwd, normalized, date), created: true };
 }
 
 export function buildRalphexRewritePrompt(plan: string): string {
@@ -317,6 +359,7 @@ export async function startRalphexPlan(
   }
 
   disablePlanMode(ctx, false);
+  activeRalphexPlans.add(threadId(ctx));
   ctx.ui.notify("Starting /ralphex-plan", "info");
   await sendPrompt(pi, ctx, buildRalphexPlanPrompt(request));
 }
@@ -328,7 +371,32 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("agent_end", async (event, ctx) => {
-    const proposedPlan = extractProposedPlan(assistantTextFromAgentEnd(event) ?? "");
+    const assistantText = assistantTextFromAgentEnd(event) ?? "";
+    const id = threadId(ctx);
+    const ralphexDraft = extractRalphexDraft(assistantText);
+    if (activeRalphexPlans.has(id) && ralphexDraft && ctx.hasUI) {
+      const choice = await ctx.ui.select("Ralphex plan draft", [...RALPHEX_DRAFT_CHOICES]);
+      if (choice === "Save plan") {
+        try {
+          const saved = await saveRalphexDraft(ctx.cwd, ralphexDraft);
+          activeRalphexPlans.delete(id);
+          ctx.ui.notify(
+            saved.created
+              ? `Plan saved to ${relative(ctx.cwd, saved.path)}`
+              : `Matching plan already exists at ${relative(ctx.cwd, saved.path)}`,
+            "info",
+          );
+        } catch (error) {
+          ctx.ui.notify(`Failed to save plan: ${error instanceof Error ? error.message : String(error)}`, "error");
+        }
+      } else if (choice === "Cancel") {
+        activeRalphexPlans.delete(id);
+        ctx.ui.notify("Ralphex plan creation cancelled", "warning");
+      }
+      return;
+    }
+
+    const proposedPlan = extractProposedPlan(assistantText);
     const planMode = currentPlanMode(ctx);
     if (!planMode?.active || !proposedPlan || !ctx.hasUI) return;
 
@@ -351,6 +419,7 @@ export default function (pi: ExtensionAPI) {
     }
     if (choice === "No, rewrite plan in ralphex mode") {
       setPlanMode(ctx, false);
+      activeRalphexPlans.add(id);
       ctx.ui.notify("Leaving Plan mode; rewriting draft in Ralphex mode", "info");
       await sendPrompt(pi, ctx as ExtensionCommandContext, buildRalphexRewritePrompt(proposedPlan));
     }

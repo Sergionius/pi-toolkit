@@ -31,6 +31,13 @@ const sample = `# Feature
 - no task checkbox
 `;
 
+test("ralphex formats elapsed workflow duration", () => {
+  assert.equal(ralphex.formatDuration(999), "0 сек");
+  assert.equal(ralphex.formatDuration(42_900), "42 сек");
+  assert.equal(ralphex.formatDuration(754_000), "12 мин 34 сек");
+  assert.equal(ralphex.formatDuration(3_905_000), "1 ч 05 мин 05 сек");
+});
+
 test("ralphex workflow status right-aligns model and execution mode", () => {
   const status = ralphex.formatWorkflowStatus("Ralphex exec", "zai/glm-5.3-flash · auto", 60);
   assert.equal(status.length, 60);
