@@ -585,6 +585,8 @@ test("task prompt enforces one task, validation, commit, and mode-specific ambig
   assert.match(interactive, /pre-existing issues outside this task/);
   assert.match(interactive, /non-regression pass/);
   assert.match(interactive, /feat: <task summary>/);
+  assert.match(interactive, /entire commit message in English only/);
+  assert.match(interactive, /regardless of the language used in the plan or user request/);
   assert.match(interactive, /Immediately before starting each unchecked item/);
   assert.match(interactive, /"stage":"checkbox"/);
   assert.match(interactive, /Immediately before each validation command/);

@@ -82,7 +82,7 @@ Then:
    - If a validation command fails only because of pre-existing issues outside this task, establish that this task did not add or worsen them by comparing diagnostics with the base commit or otherwise inspecting the affected paths. Record the command and concise non-regression evidence under ## Execution Notes, then treat that command as a non-regression pass.
    - If an applicable validation cannot run because the environment, SDK, credentials, or dependencies are unavailable, or you cannot distinguish its failure from a regression introduced by this task, do not commit and report failure.
 6. Only after applicable validation passes or pre-existing failures are proven unchanged, mark all completed checkboxes in Task ${options.task.number} as [x].
-7. Commit all changes for this task, including the updated plan, with a concise message in the form feat: <task summary>. Do not amend an earlier commit and do not push.
+7. Commit all changes for this task, including the updated plan, with a concise message in the form feat: <task summary>. Write the entire commit message in English only, regardless of the language used in the plan or user request. Do not amend an earlier commit and do not push.
 8. Stop immediately after that commit. Do not continue to another Task.
 
 ## Questions and decisions
