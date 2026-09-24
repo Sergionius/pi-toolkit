@@ -55,12 +55,32 @@ function isRestartPath(projectPath: string) {
   return false;
 }
 
-function markPath(cwd: string, rawPath: string) {
+function isModelPath(projectPath: string) {
+  return projectPath.endsWith(".dart") && /(^|\/)(models?\/|[^/]*_model\.dart$)/i.test(projectPath);
+}
+
+function addsClassMember(input: any) {
+  const oldText = String(input.oldText ?? "");
+  const newText = String(input.newText ?? "");
+  // Only added lines matter: replacing an existing value or method body is reloadable.
+  const previous = new Set(oldText.split(/\r?\n/).map((line) => line.trim()));
+  return newText.split(/\r?\n/).some((line) => {
+    const added = line.trim();
+    if (!added || previous.has(added) || /^(?:return|throw|await|yield|break|continue|case)\b/.test(added)) return false;
+    return /^(?:(?:static|late|final|const|covariant)\s+)*(?:[\w<>?, ]+\s+)?get\s+\w+\b/.test(added)
+      || /^(?:(?:static|late|final|const|covariant)\s+)*(?:[\w<>?, ]+\s+)+\w+\s*(?:[;=])/.test(added)
+      || /\b(?:required\s+)?this\.\w+\b/.test(added);
+  });
+}
+
+function markPath(cwd: string, rawPath: string, input?: any, toolName?: string) {
   const projectPath = normalizeProjectPath(cwd, rawPath);
   if (!isAppRelevantPath(projectPath)) return;
   needsFlutterRefresh = true;
   changedPaths.add(projectPath);
-  if (isRestartPath(projectPath)) needsRestart = true;
+  if (isRestartPath(projectPath) || isModelPath(projectPath)
+    || (projectPath.endsWith(".dart") && (toolName === "write" || (toolName === "edit" &&
+      (Array.isArray(input?.edits) ? input.edits : [input]).some(addsClassMember))))) needsRestart = true;
 }
 
 function markFromBashCommand(command: string) {
@@ -75,6 +95,7 @@ function markFromBashCommand(command: string) {
   if (/\b(lib\/[^\s'\"]+\.dart|pubspec\.yaml|assets\/|config\/)\b/.test(command)) {
     needsFlutterRefresh = true;
     changedPaths.add("<bash-mentioned-flutter-path>");
+    if (/\b(?:models?\/[^\s'\"]+|[^\s'\"]+_model\.dart)\b/i.test(command)) needsRestart = true;
   }
 }
 
@@ -95,7 +116,7 @@ export default function (pi: ExtensionAPI) {
 
     const input = (event as any).input ?? {};
     if (event.toolName === "write" || event.toolName === "edit") {
-      markPath(ctx.cwd, String(input.path ?? ""));
+      markPath(ctx.cwd, String(input.path ?? ""), input, event.toolName);
       return;
     }
 

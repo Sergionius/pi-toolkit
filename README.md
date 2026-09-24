@@ -11,7 +11,7 @@ Private personal [Pi](https://pi.dev) package containing reusable extensions, pr
 - `codex-accounts.ts` — local multi-account manager for OpenAI/Codex OAuth profiles.
 - `commit.ts` — global `/commit` command: stages all changes and creates a local commit using the model configured by `PI_COMMIT_MODEL`, without pushing.
 - `figma-context.ts` — `figma_get_screen_context` tool.
-- `flutter-refresh.ts` — automatic Flutter reload/restart after successful edits.
+- `flutter-refresh.ts` — automatic Flutter refresh after successful edits: model changes, added class fields/constructor parameters, and Dart file rewrites trigger hot restart; ordinary UI edits use hot reload.
 - `toolkit.ts` — toolkit diagnostics and VS Code bridge synchronization.
 
 ### Prompt templates
