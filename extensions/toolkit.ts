@@ -60,7 +60,10 @@ export async function syncVsCodeBridge(options: SyncVsCodeBridgeOptions = {}): P
 
   await mkdir(extensionsDir, { recursive: true });
   await rm(temporary, { recursive: true, force: true });
-  await cp(VSCODE_BRIDGE_SOURCE, temporary, { recursive: true, force: true });
+  await mkdir(temporary, { recursive: true });
+  for (const file of ["package.json", "extension.js", "README.md"]) {
+    await cp(join(VSCODE_BRIDGE_SOURCE, file), join(temporary, file));
+  }
 
   const copiedManifest = await readBridgeManifest(temporary);
   if (copiedManifest.version !== manifest.version || copiedManifest.name !== manifest.name) {
@@ -82,7 +85,8 @@ export async function syncVsCodeBridge(options: SyncVsCodeBridgeOptions = {}): P
   const removedLegacy: string[] = [];
   for (const entry of await readdir(extensionsDir, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
-    if (entry.name !== LEGACY_BRIDGE_DIRECTORY || entry.name === directoryName) continue;
+    if (entry.name === directoryName || (entry.name !== LEGACY_BRIDGE_DIRECTORY
+      && !entry.name.startsWith(`${manifest.publisher}.${manifest.name}-`))) continue;
     const legacyPath = join(extensionsDir, entry.name);
     await rm(legacyPath, { recursive: true, force: true });
     removedLegacy.push(legacyPath);

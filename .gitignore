@@ -20,8 +20,8 @@ auth.json.codex-switch.bak
 .dart_tool/
 coverage/
 
-# Maintained as an independent repository in place.
-vscode/pi-flutter-refresh-bridge/
+# The VS Code bridge source is also tracked here so installed Pi packages can sync it.
+# Its local nested .git directory is not part of this package.
 
 # Local environment and secret files.
 .env

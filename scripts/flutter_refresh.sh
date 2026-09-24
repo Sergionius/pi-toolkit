@@ -45,7 +45,7 @@ run_project_bridge() {
 run_vscode_command() {
   local requested_mode="$1"
   local command_id="dart.hotReload"
-  [[ "$requested_mode" == "restart" ]] && command_id="dart.hotRestart"
+  [[ "$requested_mode" == "restart" ]] && command_id="flutter.hotRestart"
 
   if [[ "${PI_FLUTTER_REFRESH_VSCODE:-0}" != "1" ]]; then
     return 127

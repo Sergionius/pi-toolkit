@@ -96,4 +96,12 @@ set -e
 [[ "$code" -eq 8 ]]
 grep -q "TIMEOUT" <<<"$output"
 
+new_project
+project="$NEW_PROJECT"
+mkdir -p "$project/bin"
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" > "$PI_TEST_CODE_ARGS"\n' > "$project/bin/code"
+chmod +x "$project/bin/code"
+(cd "$project" && PATH="$project/bin:$PATH" PI_TEST_CODE_ARGS="$project/code-args" PI_FLUTTER_REFRESH_VSCODE=1 "$HELPER" restart >/dev/null)
+grep -q -- '--command flutter.hotRestart' "$project/code-args"
+
 printf 'flutter refresh handshake tests: OK\n'

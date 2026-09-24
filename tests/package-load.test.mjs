@@ -281,18 +281,20 @@ test("VS Code bridge sync is verified, idempotent, and removes the legacy instal
     const legacy = join(temporary, "local.pi-flutter-refresh-bridge-0.1.0");
     await mkdir(legacy, { recursive: true });
     await writeFile(join(legacy, "legacy.txt"), "legacy", "utf8");
+    const previous = join(temporary, "local.pi-flutter-refresh-bridge-0.2.0");
+    await mkdir(previous, { recursive: true });
 
     const imported = await jiti.import(join(root, "extensions", "toolkit.ts"));
     const first = await imported.syncVsCodeBridge({ extensionsDir: temporary });
     const second = await imported.syncVsCodeBridge({ extensionsDir: temporary });
 
     assert.equal(first.destination, second.destination);
-    assert.equal(first.version, "0.2.0");
-    assert.equal(first.removedLegacy.length, 1);
+    assert.equal(first.version, "0.2.1");
+    assert.equal(first.removedLegacy.length, 2);
     assert.equal(second.removedLegacy.length, 0);
 
     const manifest = JSON.parse(await readFile(join(second.destination, "package.json"), "utf8"));
-    assert.equal(manifest.version, "0.2.0");
+    assert.equal(manifest.version, "0.2.1");
     assert.equal(manifest.publisher, "local");
   } finally {
     await rm(temporary, { recursive: true, force: true });
