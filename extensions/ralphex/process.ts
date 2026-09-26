@@ -110,7 +110,7 @@ export async function runCommand(options: {
     const child = spawn(options.command, options.args, {
       cwd: options.cwd,
       shell: false,
-      stdio: ["pipe", "pipe", "pipe"],
+      stdio: [options.stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
     });
     let stdout = "";
     let stderr = "";
@@ -131,6 +131,9 @@ export async function runCommand(options: {
     child.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
     child.on("error", (error) => { stderr += `${error.message}\n`; finish(1); });
     child.on("close", (code) => finish(code ?? 1));
-    child.stdin.end(options.stdin ?? "");
+    if (options.stdin !== undefined) {
+      child.stdin.on("error", (error) => { stderr += `${error.message}\n`; });
+      child.stdin.end(options.stdin);
+    }
   });
 }
