@@ -1,6 +1,6 @@
 # pi-toolkit
 
-Private personal [Pi](https://pi.dev) package containing reusable extensions, prompt templates, skills, and the VS Code bridge used by the Flutter auto-refresh workflow.
+[Pi](https://pi.dev) package containing reusable extensions, prompt templates, skills, and the VS Code bridge used by the Flutter auto-refresh workflow.
 
 ## Included
 
@@ -28,16 +28,17 @@ Private personal [Pi](https://pi.dev) package containing reusable extensions, pr
 - `scripts/flutter_refresh.sh` — confirmed request/response handshake with VS Code.
 - `vscode/pi-flutter-refresh-bridge/` — Dart-Code reload/restart bridge.
 
-The Tax push/reply extension is intentionally maintained in the separate `Sergionius/tax` package.
+The optional Tax push/reply extension is maintained separately in the public [`Sergionius/tax`](https://github.com/Sergionius/tax) package.
 
 ## Install
 
-The repository is private, so GitHub SSH access must already work:
+Install from the public GitHub repository (no npm publication or GitHub SSH access required):
 
 ```bash
-ssh -T git@github.com
-pi install git:git@github.com:Sergionius/pi-toolkit.git
+pi install git:github.com/Sergionius/pi-toolkit
 ```
+
+Pi, Node.js 22.19 or newer, and Git are required. Individual integrations have additional requirements: VS Code with Dart-Code and a running Flutter debug session for auto-refresh; `FIGMA_TOKEN` for Figma; Claude Code CLI for `ask-claude` and Ralphex review; and CDT with a configured `cdt.yaml` for optional test releases. OpenAI/Codex account commands require an existing Pi OAuth login. Only use a package whose source you trust: installing a Pi package executes its extension code.
 
 Reload Pi after installation:
 
@@ -309,8 +310,9 @@ Manual test from a Flutter project root:
 ## Development
 
 ```bash
-npm install
+npm ci
 npm test
+npm audit --omit=dev
 ```
 
 Tests load every extension, check command registration, exercise local commit behavior, exercise the Flutter handshake, verify the Claude wrapper with a mock CLI, and verify idempotent VS Code bridge synchronization in temporary directories.
@@ -328,7 +330,7 @@ Archive only the extensions, skill, and `flutter_refresh.sh` that now belong to 
 ## Rollback
 
 ```bash
-pi remove git:git@github.com:Sergionius/pi-toolkit.git
+pi remove git:github.com/Sergionius/pi-toolkit
 ```
 
 Restore archived resources to `~/.pi/agent/`, run `/reload`, and restore the previous VS Code bridge directory if required.
