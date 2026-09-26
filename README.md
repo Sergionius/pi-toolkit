@@ -26,7 +26,7 @@
 ### Bundled integrations
 
 - `scripts/flutter_refresh.sh` — confirmed request/response handshake with VS Code.
-- `vscode/pi-flutter-refresh-bridge/` — Dart-Code reload/restart bridge.
+- `vscode/bundled-flutter-refresh-bridge/` — bundled Dart-Code reload/restart bridge snapshot. The independently maintained `vscode/pi-flutter-refresh-bridge/` checkout is ignored by this repository.
 
 The optional Tax push/reply extension is maintained separately in the public [`Sergionius/tax`](https://github.com/Sergionius/tax) package.
 
@@ -74,7 +74,7 @@ The command runs `git add .` from the repository root, asks a separate ephemeral
 pi update --extensions
 ```
 
-After an update that changes the VS Code bridge, run `/reload`, `/pi-toolkit-sync-vscode`, and `Developer: Reload Window` again.
+After an update that changes the bundled VS Code bridge, run `/reload`, `/pi-toolkit-sync-vscode`, and `Developer: Reload Window` again. Updating the separate bridge repository does not automatically update this package's bundled snapshot.
 
 ## Environment
 

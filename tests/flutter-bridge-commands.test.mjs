@@ -10,7 +10,7 @@ const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const require = createRequire(import.meta.url);
 
 test("VS Code bridge dispatches the Dart-Code reload and Flutter restart commands", async () => {
-  const source = await readFile(resolve(root, "vscode/pi-flutter-refresh-bridge/extension.js"), "utf8");
+  const source = await readFile(resolve(root, "vscode/bundled-flutter-refresh-bridge/extension.js"), "utf8");
   const commands = [];
   const module = { exports: {} };
   vm.runInNewContext(`${source}\nmodule.exports.executeDartCommandForTest = executeDartCommand;`, {

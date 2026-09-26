@@ -8,7 +8,7 @@ import { getCodexAccountsSummary } from "./lib/codex-auth";
 
 const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const HELPER_PATH = join(PACKAGE_ROOT, "scripts", "flutter_refresh.sh");
-const VSCODE_BRIDGE_SOURCE = join(PACKAGE_ROOT, "vscode", "pi-flutter-refresh-bridge");
+const VSCODE_BRIDGE_SOURCE = join(PACKAGE_ROOT, "vscode", "bundled-flutter-refresh-bridge");
 const LEGACY_BRIDGE_DIRECTORY = "local.pi-flutter-refresh-bridge-0.1.0";
 
 type BridgeManifest = {
