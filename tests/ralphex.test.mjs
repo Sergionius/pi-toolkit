@@ -61,6 +61,23 @@ test("ralphex reports concise workflow progress to its UI and event bus", () => 
   }]);
 });
 
+test("ralphex displays clarification in the input title, not its placeholder", async () => {
+  const calls = [];
+  const question = "Как обработать HTML вместо JSON?";
+  const answer = await ralphex.askTaskClarification({
+    notify: (text, level) => calls.push(["notify", text, level]),
+    input: async (title, placeholder) => {
+      calls.push(["input", title, placeholder]);
+      return "Как указано в плане";
+    },
+  }, 4, question);
+  assert.equal(answer, "Как указано в плане");
+  assert.deepEqual(calls, [
+    ["notify", `Task 4 clarification: ${question}`, "info"],
+    ["input", `Task 4: ${question}`, undefined],
+  ]);
+});
+
 test("ralphex release arguments support optional and repeated task IDs", () => {
   assert.deepEqual(
     ralphex.parseCommandArgs("--auto --release test --id BTL-123 --id=BTL-456 feature.md"),

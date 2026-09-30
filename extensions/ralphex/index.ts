@@ -405,6 +405,15 @@ async function resolvePlan(
   return { path: plans[labels.indexOf(selected)], auto: parsed.auto, model: parsed.model, release: parsed.release };
 }
 
+export async function askTaskClarification(
+  ui: Pick<ExtensionCommandContext["ui"], "notify" | "input">,
+  taskNumber: number,
+  question: string,
+): Promise<string | undefined> {
+  ui.notify(`Task ${taskNumber} clarification: ${question}`, "info");
+  return ui.input(`Task ${taskNumber}: ${question}`);
+}
+
 function parseQuestion(text: string): string | undefined {
   const payload = text.match(QUESTION_PATTERN)?.[1]?.trim();
   if (!payload) return undefined;
@@ -559,7 +568,7 @@ async function executePlan(
       if (question) {
         questions++;
         if (questions > 20) throw new Error("too many interactive questions without completing a task");
-        const answer = await ctx.ui.input(`Task ${task.number} clarification`, question);
+        const answer = await askTaskClarification(ctx.ui, task.number, question);
         if (!answer?.trim()) throw new Error(`Task ${task.number} stopped: clarification was not answered`);
         const latest = await readPlan(resolved.path);
         await writePlan(resolved.path, appendExecutionNote(latest, `Task ${task.number}: ${question} — ${answer.trim()}`));
