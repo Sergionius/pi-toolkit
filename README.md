@@ -73,7 +73,7 @@ The command runs `git add .` from the repository root, asks a separate ephemeral
 
 ## Backlog
 
-After installing this package and running `/reload`, use `/skill:backlog` to inspect the current project's backlog, `/skill:backlog <slug>` for one item, or `/skill:backlog --all` to decide on every item in turn. Deferred findings go in `docs/backlog/<slug>.md` in the **project being worked on**, not this package. The `backlog_choice` tool presents an interactive menu (including in normal mode, not only Plan Mode). Cancelling a menu makes no changes; without an interactive UI the workflow stops rather than assuming approval. The skill does not fix items or commit without your authorization. Git is required.
+After installing this package and running `/reload`, use `/skill:backlog` to inspect the current project's backlog, `/skill:backlog <slug>` for one item, or `/skill:backlog --all` to decide on every item in turn. Deferred findings go in `docs/backlog/<slug>.md` in the **project being worked on**, not this package. An optional `priority: p0 | p1 | p2` frontmatter field records known urgency; omit it when urgency is unknown, and keep priority out of filenames. The `backlog_choice` tool presents an interactive menu (including in normal mode, not only Plan Mode). Cancelling a menu makes no changes; without an interactive UI the workflow stops rather than assuming approval. The skill does not fix items or commit without your authorization. Git is required.
 
 ## Update
 

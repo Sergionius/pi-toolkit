@@ -39,7 +39,8 @@ user's last-window capture replays only when the exited window happened to be `w
 reviewing PR #370; the fix touches restore ordering, which is why it was deferred rather than done inline.
 ```
 
-Three frontmatter fields, written once and rewritten only as **Appending** below allows:
+Three existing frontmatter fields, plus an optional `priority`. Do not put priority in the filename.
+Fields are written once except where **Appending** below allows updates or when new evidence changes priority:
 
 - **`worth: yes | no | later`** — the triage call, and the field the list is ordered by:
   - **`yes`** — the value is agreed and it should be fixed. Says nothing about schedule: an item
@@ -49,6 +50,10 @@ Three frontmatter fields, written once and rewritten only as **Appending** below
   - **`no`** — a decision not to fix, kept so the same finding is not rediscovered and re-argued by the
     next review that touches the file. Keep a `no` only while that rationale still earns its place; once
     it does not, delete the file rather than carrying it.
+- **`priority: p0 | p1 | p2`** — optional urgency, separate from `worth`. Use `p0` only for a
+  verified critical issue needing immediate action, `p1` for significant impact that should be addressed
+  soon, and `p2` for known lower-impact work. Omit the field when impact or urgency is unknown; do not
+  guess `p2` as a default. Reassess it when evidence changes. The filename remains a stable descriptive slug.
 - **`where: path:line`** — omit when the item is not anchored to one place. Its path narrows the dedupe
   search alongside the slug and the line is a navigation hint that moves. Compare paths only when both
   items have `where`; two items missing it are not thereby the same item.
@@ -134,9 +139,14 @@ instead of guessing at the nearest name.
 2. **Verify before reporting.** `where` goes stale when a file is renamed or a line moves. For each item
    that has one, check the location still exists and still says what the item claims; report a stale item
    as stale rather than as work. An item without `where` has nothing to verify — carry it through as-is.
-3. Report every item, one line each — `yes` first, then `later`, then `no`, oldest `added` first within
-   each group. Include `where` for the items that have one. Do not editorialize; the item already carries
-   its reasoning.
+3. Report every item, one line each — `yes` first, then `later`, then `no`; within `yes`, order by
+   `priority` (`p0`, `p1`, `p2`, then unset), oldest `added` first for ties. Within `later` and `no`, order
+   by oldest `added` first: priority does not override an unresolved or negative value decision. Show
+   priority when set and say "unprioritized" when absent; include `where` when present. Do not editorialize;
+   the item already carries its reasoning. If asked for the first/highest-priority item to fix, consider
+   `worth: yes` only and use that ordering. Before acting on a selected item, check its current impact and
+   blockers; if an unprioritized item could be more urgent or the ranking is uncertain, explain the
+   uncertainty and ask rather than inventing a priority. Never treat missing priority as `p2`.
 4. Offer concrete actions with **`backlog_choice`**, with the recommendation first. Use 2–4 unique option labels and always include a leave/no-change option; cancellation or tool failure is not permission to act:
    - **fix a named item now** — name the specific item in the option label, not "fix something";
    - **drop a named item** — a `no` whose rationale has stopped earning its place;
@@ -176,8 +186,8 @@ the directory or writing any file:
 each one claims. A shared path is not a duplicate on its own, since one file holds several unrelated defects,
 and the trailing line moves with any edit above it. A pre-existing defect surfaces in every
 review that touches its file, so the same item arrives repeatedly. If it is already there, say so and leave
-it alone. If the new sighting sharpens the description or changes the `worth` call, edit that file in place
-rather than adding a second one.
+it alone. If the new sighting sharpens the description or changes the `worth` or `priority` call, edit
+that file in place rather than adding a second one.
 
 Create `docs/backlog/` if it does not exist — after the branch check above, never before it.
 

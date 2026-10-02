@@ -54,6 +54,9 @@ test("backlog skill is bundled with source attribution and Pi-specific commands"
   assert.match(skill, /umputun\/cc-thingz/);
   assert.match(skill, /\/skill:backlog --all/);
   assert.match(skill, /backlog_choice/);
+  assert.match(skill, /priority: p0 \| p1 \| p2/);
+  assert.match(skill, /Omit the field when impact or urgency is unknown/);
+  assert.match(skill, /Never treat missing priority as `p2`/);
   assert.doesNotMatch(skill, /AskUserQuestion|\/workflow:backlog/);
   assert.match(skill, /Never auto-commit/);
   assert.match(skill, /git diff --cached --name-only/);
