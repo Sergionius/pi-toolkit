@@ -17,7 +17,7 @@
 ### Prompt templates
 
 - `/auto <task>` — execute a task autonomously without questions and report every material decision made without user approval.
-- `/duo <task>` — Pi implements, Claude reviews through Orca, then Pi addresses findings; `/duo parallel <task>` compares independent read-only analyses.
+- `/duo <task>` — Pi implements and Claude reviews through Orca; `/duo parallel <task>` compares independent read-only analyses; `/duo discuss <task>` adds a bounded argument exchange.
 
 ### Skills
 
@@ -111,9 +111,10 @@ Use the installed package's `/duo` prompt in any Pi project with Orca and a conf
 ```text
 /duo исправь ошибку входа
 /duo parallel предложи способы ускорить загрузку списка
+/duo discuss предложи способы ускорить загрузку списка
 ```
 
-In the default mode, the current Pi session implements and tests the task, then delegates read-only code review to Claude through Orca orchestration. Pi assesses and fixes verified findings and reruns relevant checks. In `parallel` mode, Pi and Claude independently investigate without editing files; Pi compares their evidence and proposes a solution without implementing it. The prompt loads Orca's existing `orchestration` skill and version-matched CLI guide rather than maintaining its own command reference. Missing Orca or Claude is reported as a blocker, not silently replaced with another integration. Run `/reload` after updating the package to discover the command.
+In the default mode, the current Pi session implements and tests the task, then delegates read-only code review to Claude through Orca orchestration. Pi assesses and fixes verified findings and reruns relevant checks. In `parallel` mode, Pi and Claude independently investigate without editing files; Pi compares their evidence and proposes a solution without implementing it. In `discuss` mode, the same independent investigation is followed by up to two read-only rounds of exchanging arguments through Orca; Pi reports the conclusion and any unresolved disagreement without implementing it. The prompt loads Orca's existing `orchestration` skill and version-matched CLI guide rather than maintaining its own command reference. Missing Orca or Claude is reported as a blocker, not silently replaced with another integration. Run `/reload` after updating the package to discover the command.
 
 ## Ralphex plan
 

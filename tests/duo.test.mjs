@@ -10,7 +10,7 @@ test("duo is bundled as a prompt and delegates Orca coordination to its existing
   const prompt = await readFile(resolve(root, "prompts/duo.md"), "utf8");
 
   assert.deepEqual(manifest.pi.prompts, ["./prompts"]);
-  assert.match(prompt, /^---\ndescription: .+\nargument-hint: "\[parallel\] <задача>"\n---/);
+  assert.match(prompt, /^---\ndescription: .+\nargument-hint: "\[parallel\|discuss\] <задача>"\n---/);
   assert.match(prompt, /\$ARGUMENTS/);
   assert.match(prompt, /Если задача отсутствует/);
   assert.match(prompt, /skill `orchestration`/);
@@ -27,4 +27,19 @@ test("duo modes separate writable implementation from read-only parallel researc
   assert.match(prompt, /не передавай ему вывод Pi до завершения его анализа/);
   assert.match(prompt, /Никаких правок кода, планов или других файлов/);
   assert.match(prompt, /Не реализуй его без отдельного запроса/);
+});
+
+test("duo discuss exchanges arguments after independent research without editing files", async () => {
+  const prompt = await readFile(resolve(root, "prompts/duo.md"), "utf8");
+  const readme = await readFile(resolve(root, "README.md"), "utf8");
+  assert.match(prompt, /`discuss` — режим обсуждения/);
+  assert.match(prompt, /Режим `discuss` — независимый анализ, затем обмен аргументами через Orca без редактирования/);
+  assert.match(prompt, /не передавая Claude свои выводы заранее/);
+  assert.match(prompt, /не более одного дополнительного раунда обмена/);
+  assert.match(prompt, /создай новый Task\/Dispatch/);
+  assert.match(prompt, /не отправляй сообщение завершённому воркеру/);
+  assert.match(prompt, /неразрешённые расхождения/);
+  assert.match(prompt, /Никаких правок кода, планов или других файлов/);
+  assert.match(readme, /\/duo discuss предложи способы ускорить загрузку списка/);
+  assert.match(readme, /up to two read-only rounds of exchanging arguments through Orca/);
 });
