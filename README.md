@@ -17,6 +17,7 @@
 ### Prompt templates
 
 - `/auto <task>` — execute a task autonomously without questions and report every material decision made without user approval.
+- `/duo <task>` — Pi implements, Claude reviews through Orca, then Pi addresses findings; `/duo parallel <task>` compares independent read-only analyses.
 
 ### Skills
 
@@ -102,6 +103,17 @@ Run a task end-to-end without clarification or confirmation prompts:
 The agent investigates the project, resolves ambiguity using safe and reversible choices, performs the work, and runs available validation. It does not perform destructive or irreversible actions unless they were explicitly requested in the original task. The final report lists the result, checks, assumptions, limitations, and all material decisions made without consulting the user.
 
 Invoking `/auto` without a task makes no changes and reports the missing task instead of asking for input.
+
+## Pi + Claude via Orca
+
+Use the installed package's `/duo` prompt in any Pi project with Orca and a configured Claude agent:
+
+```text
+/duo исправь ошибку входа
+/duo parallel предложи способы ускорить загрузку списка
+```
+
+In the default mode, the current Pi session implements and tests the task, then delegates read-only code review to Claude through Orca orchestration. Pi assesses and fixes verified findings and reruns relevant checks. In `parallel` mode, Pi and Claude independently investigate without editing files; Pi compares their evidence and proposes a solution without implementing it. The prompt loads Orca's existing `orchestration` skill and version-matched CLI guide rather than maintaining its own command reference. Missing Orca or Claude is reported as a blocker, not silently replaced with another integration. Run `/reload` after updating the package to discover the command.
 
 ## Ralphex plan
 
