@@ -206,6 +206,16 @@ async function ensureExecPreflight(ctx: ExtensionCommandContext, planPath: strin
   const initialMarkdown = await readPlan(planPath);
   if (!parseTasks(initialMarkdown).length) throw new Error("plan has no ### Task N: sections");
 
+  // An unborn branch has no HEAD to use as the execution/review baseline.
+  // Capture the project's current non-ignored files once before applying the
+  // usual clean-worktree rules to subsequent runs.
+  const currentHead = await git(root, ["rev-parse", "--verify", "HEAD"], true);
+  if (!currentHead) {
+    ctx.ui.notify("No commits yet: staging all non-ignored files and creating an initial commit", "info");
+    await git(root, ["add", "-A"]);
+    await git(root, ["commit", "--allow-empty", "-m", "chore: initial commit"]);
+  }
+
   const unrelated = (await dirtyPaths(root)).filter((path) => normalizeRelative(path) !== relativePlan);
   if (unrelated.length) {
     throw new Error(`uncommitted changes exist besides the plan file:\n${unrelated.map((path) => `- ${path}`).join("\n")}`);

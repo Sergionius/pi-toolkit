@@ -332,6 +332,71 @@ test("ralphex preflight can create and resume a plan branch from main", async ()
   }
 });
 
+test("ralphex preflight creates a baseline commit for an unborn repository", async () => {
+  const temporary = await mkdtemp(join(tmpdir(), "ralphex-unborn-"));
+  const git = (...args) => execFileSync("git", args, { cwd: temporary, encoding: "utf8" }).trim();
+  try {
+    git("init", "-q");
+    git("config", "user.email", "ralphex@example.test");
+    git("config", "user.name", "Ralphex Test");
+    const repository = git("rev-parse", "--show-toplevel");
+    const plans = join(repository, "docs", "plans");
+    await mkdir(plans, { recursive: true });
+    const plan = join(plans, "feature.md");
+    await writeFile(plan, sample, "utf8");
+    await writeFile(join(repository, "project.txt"), "project", "utf8");
+    await writeFile(join(repository, ".gitignore"), "secret.txt\n", "utf8");
+    await writeFile(join(repository, "secret.txt"), "secret", "utf8");
+    const notifications = [];
+    const ctx = {
+      cwd: repository,
+      ui: {
+        notify: (message, level) => notifications.push([message, level]),
+        select: async () => { throw new Error("unexpected branch prompt"); },
+      },
+    };
+
+    const first = await ralphex.ensureExecPreflight(ctx, plan, true);
+    assert.equal(first.base, git("rev-parse", "HEAD"));
+    assert.equal(git("log", "-1", "--format=%s"), "chore: initial commit");
+    assert.deepEqual(git("ls-files").split("\n"), [".gitignore", "docs/plans/feature.md", "project.txt"]);
+    assert.deepEqual(notifications, [["No commits yet: staging all non-ignored files and creating an initial commit", "info"]]);
+    assert.equal(git("status", "--porcelain"), "");
+
+    const second = await ralphex.ensureExecPreflight(ctx, plan, true);
+    assert.equal(second.base, first.base);
+    assert.equal(git("rev-list", "--count", "HEAD"), "1");
+    await writeFile(join(repository, "another.txt"), "not committed", "utf8");
+    await assert.rejects(() => ralphex.ensureExecPreflight(ctx, plan, true), /uncommitted changes exist besides the plan file/);
+  } finally {
+    await rm(temporary, { recursive: true, force: true });
+  }
+});
+
+test("ralphex preflight creates an empty initial commit when all files are ignored", async () => {
+  const temporary = await mkdtemp(join(tmpdir(), "ralphex-unborn-ignored-"));
+  const git = (...args) => execFileSync("git", args, { cwd: temporary, encoding: "utf8" }).trim();
+  try {
+    git("init", "-q");
+    git("config", "user.email", "ralphex@example.test");
+    git("config", "user.name", "Ralphex Test");
+    git("config", "core.excludesFile", "/dev/null");
+    const repository = git("rev-parse", "--show-toplevel");
+    const plans = join(repository, "docs", "plans");
+    await mkdir(plans, { recursive: true });
+    const plan = join(plans, "feature.md");
+    await writeFile(plan, sample, "utf8");
+    await writeFile(join(repository, ".git", "info", "exclude"), "*\n", "utf8");
+    const ctx = { cwd: repository, ui: { notify: () => {}, select: async () => { throw new Error("unexpected prompt"); } } };
+    const result = await ralphex.ensureExecPreflight(ctx, plan, true);
+    assert.equal(result.base, git("rev-parse", "HEAD"));
+    assert.equal(git("ls-files"), "");
+    assert.equal(git("status", "--porcelain"), "");
+  } finally {
+    await rm(temporary, { recursive: true, force: true });
+  }
+});
+
 test("ralphex preflight keeps direct, cancel, feature-branch, and auto behavior", async () => {
   const temporary = await mkdtemp(join(tmpdir(), "ralphex-exec-choice-"));
   const git = (...args) => execFileSync("git", args, { cwd: temporary, encoding: "utf8" }).trim();
