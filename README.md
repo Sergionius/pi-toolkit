@@ -7,6 +7,7 @@
 ### Extensions
 
 - `plan/` — conversational plan mode and `/ralphex-plan` implementation-plan creation.
+- `backlog-choice.ts` — interactive choice menu for the backlog skill outside Plan Mode.
 - `codex-status.ts` — Codex usage and reset-credit commands.
 - `codex-accounts.ts` — local multi-account manager for OpenAI/Codex OAuth profiles.
 - `commit.ts` — global `/commit` command: stages all changes and creates a local commit using the model configured by `PI_COMMIT_MODEL`, without pushing.
@@ -23,6 +24,7 @@
 
 - `figma-to-css` — workflow for implementing screens from Figma.
 - `ask-claude` — read-only second opinion from Claude Code for debugging, investigation, architecture, and adversarial review.
+- `backlog` — Git-backed deferred-work list in each project's `docs/backlog/`; adapted from [cc-thingz](https://github.com/umputun/cc-thingz) (MIT).
 
 ### Bundled integrations
 
@@ -68,6 +70,10 @@ Create a local commit from any Git repository:
 ```
 
 The command runs `git add .` from the repository root, asks a separate ephemeral Pi process using the required `PI_COMMIT_MODEL` environment variable with low reasoning for a validated Conventional Commit message, and runs `git commit`. It never pushes. For example: `export PI_COMMIT_MODEL="zai/glm-5.3-flash"`.
+
+## Backlog
+
+After installing this package and running `/reload`, use `/skill:backlog` to inspect the current project's backlog, `/skill:backlog <slug>` for one item, or `/skill:backlog --all` to decide on every item in turn. Deferred findings go in `docs/backlog/<slug>.md` in the **project being worked on**, not this package. The `backlog_choice` tool presents an interactive menu (including in normal mode, not only Plan Mode). Cancelling a menu makes no changes; without an interactive UI the workflow stops rather than assuming approval. The skill does not fix items or commit without your authorization. Git is required.
 
 ## Update
 

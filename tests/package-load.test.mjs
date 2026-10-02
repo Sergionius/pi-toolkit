@@ -9,6 +9,7 @@ import { createJiti } from "jiti";
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const jiti = createJiti(import.meta.url);
 const extensionFiles = [
+  "extensions/backlog-choice.ts",
   "extensions/codex-accounts.ts",
   "extensions/codex-status.ts",
   "extensions/commit.ts",
@@ -102,6 +103,7 @@ test("all extension entry points load and register expected commands once", asyn
   for (const command of expected) {
     assert.equal(pi.commands.filter((name) => name === command).length, 1, `${command} must be registered once`);
   }
+  assert.equal(pi.tools.filter((name) => name === "backlog_choice").length, 1);
   assert.equal(new Set(pi.commands).size, pi.commands.length, "no duplicate commands are allowed inside pi-toolkit");
 });
 
