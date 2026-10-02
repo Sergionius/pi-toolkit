@@ -1,5 +1,5 @@
 ---
-description: Совместная работа Pi и Claude через Orca: реализация, независимый анализ или обсуждение
+description: "Совместная работа Pi и Claude через Orca: реализация, независимый анализ или обсуждение"
 argument-hint: "[parallel|discuss] <задача>"
 ---
 
