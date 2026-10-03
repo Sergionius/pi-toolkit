@@ -1,13 +1,45 @@
-import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
-import { basename } from "node:path";
+import { spawn, execFileSync } from "node:child_process";
+import { existsSync, mkdtempSync, chmodSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { basename, join } from "node:path";
 
 export type ProcessResult = {
   code: number;
   stdout: string;
   stderr: string;
   assistantText: string;
+  workerError?: string;
+  logPath?: string;
 };
+
+export function redactDiagnostic(text: string): string {
+  for (const [key, value] of Object.entries(process.env)) {
+    if (/token|secret|password|api_?key|credential/i.test(key) && value && value.length >= 4) text = text.split(value).join("[REDACTED]");
+  }
+  return text.replace(/(Bearer\s+)[^\s"\\]+/gi, "$1[REDACTED]")
+    .replace(/((?:api[_-]?key|token|password|secret)["']?\s*[:=]\s*["']?)[^\s"',}]+/gi, "$1[REDACTED]");
+}
+
+export function taskFailures(result: ProcessResult, unchecked: number | undefined, before: string, after: string, dirty: string[]): string[] {
+  return [
+    unchecked === undefined ? "task section missing" : unchecked > 0 ? `unclosed checkboxes: ${unchecked}` : "",
+    before === after ? "no new commit" : "",
+    dirty.length ? `dirty tree: ${dirty.join(", ")}` : "",
+    result.workerError ? `worker error: ${result.workerError}` : "",
+    result.code !== 0 ? `worker exit code: ${result.code}` : "",
+  ].filter(Boolean);
+}
+
+export function workerDiagnostic(result: ProcessResult, failures: string[] = []): string {
+  return redactDiagnostic([
+    ...failures.map((reason) => `- ${reason}`),
+    result.workerError && `worker error: ${result.workerError}`,
+    `exit code: ${result.code}`,
+    result.logPath && `diagnostic log: ${result.logPath}`,
+    result.assistantText ? `assistant: ${result.assistantText.slice(-3000)}` : "empty assistant response",
+    result.stderr.slice(-2000),
+  ].filter(Boolean).join("\n"));
+}
 
 function piInvocation(args: string[]): { command: string; args: string[] } {
   const currentScript = process.argv[1];
@@ -33,6 +65,10 @@ export async function runPiWorker(options: {
   tools?: string[];
   onText?: (text: string) => void;
   onActivity?: (text: string) => void;
+  idleTimeoutMs?: number;
+  toolTimeoutMs?: number;
+  killGraceMs?: number;
+  invocation?: { command: string; args: string[] };
 }): Promise<ProcessResult> {
   const args = [
     "--mode", "json", "-p", "--no-session",
@@ -43,30 +79,107 @@ export async function runPiWorker(options: {
   if (options.tools) args.push("--tools", options.tools.join(","));
   args.push(options.prompt);
 
-  const invocation = piInvocation(args);
+  const idleMs = options.idleTimeoutMs ?? Number(process.env.RALPHEX_WORKER_IDLE_TIMEOUT_MS ?? 600000);
+  const toolMs = options.toolTimeoutMs ?? Number(process.env.RALPHEX_WORKER_TOOL_TIMEOUT_MS ?? 0);
+  for (const value of [idleMs, toolMs]) if (!Number.isFinite(value) || value < 0) throw new Error("Worker timeouts must be nonnegative milliseconds (0 disables)");
+  const directory = mkdtempSync(join(tmpdir(), "ralphex-worker-"));
+  chmodSync(directory, 0o700);
+  const logPath = join(directory, "attempt.json");
+  const invocation = options.invocation ?? piInvocation(args);
   return new Promise((resolve) => {
     const child = spawn(invocation.command, invocation.args, {
       cwd: options.cwd,
       shell: false,
+      detached: process.platform !== "win32",
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";
     let stderr = "";
     let buffer = "";
     let assistantText = "";
+    let workerError: string | undefined;
+    let terminalError: string | undefined;
+    let lastActivity = Date.now();
+    const tools = new Map<string, number>();
+    let killTimer: ReturnType<typeof setTimeout> | undefined;
+    const descendants = new Set<number>();
+    const killTree = (signal: NodeJS.Signals) => {
+      if (!child.pid) return;
+      // Pi bash tools use their own process groups. Capture the whole tree
+      // before TERM reparents children, then retain those PIDs for KILL.
+      if (process.platform !== "win32") {
+        try {
+          const rows = execFileSync("ps", ["-axo", "pid=,ppid="], { encoding: "utf8" }).trim().split("\n")
+            .map((line) => line.trim().split(/\s+/).map(Number));
+          const parents = new Set([child.pid, ...descendants]);
+          let changed = true;
+          while (changed) {
+            changed = false;
+            for (const [pid, ppid] of rows) if (parents.has(ppid) && !parents.has(pid)) {
+              parents.add(pid); descendants.add(pid); changed = true;
+            }
+          }
+        } catch (error) { stderr += `Cannot enumerate worker descendants: ${String(error)}\n`; }
+        for (const pid of [...descendants].reverse()) {
+          try { process.kill(-pid, signal); } catch { /* Not a group leader. */ }
+          try { process.kill(pid, signal); } catch { /* Already exited. */ }
+        }
+      }
+      try {
+        if (process.platform === "win32") spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"]);
+        else process.kill(-child.pid, signal);
+      } catch { /* Already exited. */ }
+    };
+    const timer = setInterval(() => {
+      if (terminalError) return;
+      const now = Date.now();
+      const toolExpired = toolMs > 0 && [...tools.values()].some((start) => now - start >= toolMs);
+      if (toolExpired || (tools.size === 0 && idleMs > 0 && now - lastActivity >= idleMs)) {
+        terminalError = `watchdog: ${toolExpired ? "tool execution" : "worker inactivity"} timeout (${toolExpired ? toolMs : idleMs}ms)`;
+        killTree("SIGTERM");
+        killTimer = setTimeout(() => killTree("SIGKILL"), options.killGraceMs ?? 5000);
+      }
+    }, Math.max(10, Math.min(1000, idleMs || 1000, toolMs || 1000)));
+    let finished = false;
+    const finish = (code: number) => {
+      if (finished) return;
+      finished = true;
+      clearInterval(timer);
+      // Kill remaining descendants even if the leader exited on SIGTERM.
+      if (killTimer) { clearTimeout(killTimer); killTree("SIGKILL"); }
+      const result = { code, stdout, stderr, assistantText, workerError: terminalError ?? workerError, logPath };
+      try {
+        writeFileSync(logPath, redactDiagnostic(JSON.stringify({ ...result, cwd: options.cwd, model: options.model }, null, 2)), { mode: 0o600, flag: "wx" });
+      } catch (error) {
+        result.workerError = `${result.workerError ?? ""}\nCannot save diagnostic log: ${String(error)}`;
+      }
+      resolve(result);
+    };
 
     const consume = (line: string) => {
       if (!line.trim()) return;
       try {
         const event = JSON.parse(line);
-        if (event.type === "message_end") {
-          const text = messageText(event.message);
-          if (text) {
-            assistantText = text;
-            options.onText?.(text);
-          }
+        const acceptMessage = (message: any) => {
+          if (message?.role !== "assistant") return;
+          workerError = message.errorMessage || (["error", "aborted"].includes(message.stopReason) ? `assistant stopReason=${message.stopReason}` : undefined);
+          assistantText = messageText(message);
+          if (assistantText) options.onText?.(assistantText);
+        };
+        if (event.type === "message_end") acceptMessage(event.message);
+        if (event.type === "agent_end") {
+          const last = event.messages?.filter((message: any) => message.role === "assistant").at(-1);
+          if (last) acceptMessage(last);
         }
+        if (event.type === "message_update" && event.assistantMessageEvent?.type === "error") {
+          const update = event.assistantMessageEvent;
+          workerError = update.error?.errorMessage || update.reason || "provider stream error";
+        }
+        if (event.type === "auto_retry_end" && !event.success) workerError = event.finalError || "automatic retry exhausted";
+        if (event.type === "compaction_end" && (event.errorMessage || event.aborted)) workerError = event.errorMessage || "compaction aborted";
+        if (event.type === "tool_execution_end") tools.delete(String(event.toolCallId ?? "tool"));
         if (event.type === "tool_execution_start") {
+          tools.set(String(event.toolCallId ?? "tool"), Date.now());
           const name = String(event.toolName ?? "tool");
           const input = event.args ?? event.input ?? {};
           const detail = name === "bash"
@@ -79,7 +192,10 @@ export async function runPiWorker(options: {
       }
     };
 
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
     child.stdout.on("data", (chunk) => {
+      lastActivity = Date.now();
       const text = chunk.toString();
       stdout += text;
       buffer += text;
@@ -87,14 +203,15 @@ export async function runPiWorker(options: {
       buffer = lines.pop() ?? "";
       for (const line of lines) consume(line);
     });
-    child.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
+    child.stderr.on("data", (chunk) => { lastActivity = Date.now(); stderr += chunk.toString(); });
     child.on("error", (error) => {
+      terminalError = error.message;
       stderr += `${error.message}\n`;
-      resolve({ code: 1, stdout, stderr, assistantText });
+      finish(1);
     });
     child.on("close", (code) => {
       if (buffer.trim()) consume(buffer);
-      resolve({ code: code ?? 1, stdout, stderr, assistantText });
+      finish(code ?? 1);
     });
   });
 }

@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { runCdtRelease, type CdtReleaseResult, type ReleaseRequest } from "./cdt";
 import { appendExecutionNote, baseCommit, ensureBaseCommit, executionNotes, firstIncompleteTask, parseTasks, readPlan, writePlan } from "./plan";
 import { modelConfigPaths, readModelConfig, resolveModelConfig, writeModelConfig, type RalphexModelConfig } from "./model-config";
-import { runCommand, runPiWorker } from "./process";
+import { runCommand, runPiWorker, taskFailures, workerDiagnostic } from "./process";
 import { autonomousPlanPrompt, claudeReviewPrompt, fixerPrompt, parseClaudeReview, taskPrompt, type ClaudeFinding } from "./prompts";
 
 const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -495,9 +495,7 @@ function formatTaskProgress(progress: TaskProgress, activity?: string): string {
   return detail ? `${label} — ${detail}` : label;
 }
 
-function diagnostic(result: { assistantText: string; stderr: string; code: number }): string {
-  return [result.assistantText, result.stderr, `exit code: ${result.code}`].filter(Boolean).join("\n").slice(-8000);
-}
+const diagnostic = workerDiagnostic;
 
 function workerModel(ctx: ExtensionCommandContext): string | undefined {
   return ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined;
@@ -555,6 +553,7 @@ async function executePlan(
     reportProgress(pi, ctx, `${progressName} · Task ${task.number}: ${task.title}`, "Starting fresh Pi worker…");
     let retryContext: string | undefined;
     let failures = 0;
+    const attemptLogs: string[] = [];
     let taskDone = false;
 
     while (!taskDone) {
@@ -580,8 +579,9 @@ async function executePlan(
         onActivity: (text) => reportProgress(pi, ctx, progressTitle, progress ? formatTaskProgress(progress, text) : text),
       });
       ctx.ui.setWidget("ralphex", undefined);
+      if (result.logPath) attemptLogs.push(result.logPath);
 
-      const question = !resolved.auto ? parseQuestion(result.assistantText) : undefined;
+      const question = !resolved.auto && result.code === 0 && !result.workerError ? parseQuestion(result.assistantText) : undefined;
       if (question) {
         questions++;
         if (questions > 20) throw new Error("too many interactive questions without completing a task");
@@ -596,8 +596,8 @@ async function executePlan(
       const updated = await readPlan(resolved.path);
       const currentTask = parseTasks(updated).find((candidate) => candidate.number === task.number);
       const after = await head(root);
-      const clean = (await dirtyPaths(root)).length === 0;
-      taskDone = result.code === 0 && currentTask?.unchecked === 0 && after !== before && clean;
+      const failuresFound = taskFailures(result, currentTask?.unchecked, before, after, await dirtyPaths(root));
+      taskDone = failuresFound.length === 0;
       if (taskDone) {
         completed++;
         summaries.push(parseTaskSummary(result.assistantText) ?? {
@@ -609,12 +609,12 @@ async function executePlan(
         break;
       }
 
-      retryContext = diagnostic(result);
+      retryContext = workerDiagnostic(result, failuresFound);
       if (failures >= TASK_RETRIES) {
-        throw new Error(`Task ${task.number} failed after retry.\n${retryContext}`);
+        throw new Error(`Task ${task.number} failed after retry.\n${retryContext}\nAll attempt logs:\n${attemptLogs.join("\n")}`);
       }
       failures++;
-      ctx.ui.notify(`Task ${task.number} failed; retrying once in a fresh Pi context`, "warning");
+      ctx.ui.notify(`Task ${task.number} failed; retrying once in a fresh Pi context\n${retryContext}`, "warning");
     }
   }
 
@@ -748,7 +748,7 @@ async function generateAutonomousPlan(options: {
         ? reportProgress(options.pi, options.ctx, progressTitle, text)
         : showProgress(options.ctx, progressTitle, text),
     });
-    if (result.code === 0) {
+    if (result.code === 0 && !result.workerError) {
       try {
         markdown = parseGeneratedPlan(result.assistantText);
         break;
@@ -909,7 +909,7 @@ async function runFixer(
     onActivity: (text) => reportProgress(pi, ctx, `${progressName} · Pi fixer`, text),
   });
   ctx.ui.setWidget("ralphex", undefined);
-  if (result.code !== 0 || result.assistantText.includes("<<<RALPHEX:FIX_FAILED>>>") || (await dirtyPaths(root)).length) {
+  if (result.code !== 0 || result.workerError || result.assistantText.includes("<<<RALPHEX:FIX_FAILED>>>") || (await dirtyPaths(root)).length) {
     throw new Error(`review fixer failed or left uncommitted changes:\n${diagnostic(result)}`);
   }
   const after = await head(root);
