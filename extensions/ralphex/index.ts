@@ -181,9 +181,9 @@ function reportProgress(pi: ExtensionAPI, ctx: ExtensionCommandContext, title: s
 
 function executionBranchName(planPath: string, markdown = ""): string {
   const explicit = explicitPlanSlug(markdown);
-  if (explicit) return `ralphex/${explicit}`;
+  if (explicit) return `feature/${explicit}`;
   // Legacy English filenames remain resumable; localized plans need a translated slug.
-  if (markdown && /[^\x20-\x7e]/.test(markdown.match(/^#\s+(.+)$/m)?.[1] ?? "")) return `ralphex/${planSlug(markdown)}`;
+  if (markdown && /[^\x20-\x7e]/.test(markdown.match(/^#\s+(.+)$/m)?.[1] ?? "")) return `feature/${planSlug(markdown)}`;
   const stem = basename(planPath, ".md").replace(/^(?:\d{8}|\d{4}-\d{2}-\d{2})-/, "");
   if (/[^\x20-\x7e]/.test(stem)) throw new Error("Add an English plan-slug to the plan before creating a branch");
   const slug = stem
@@ -191,7 +191,7 @@ function executionBranchName(planPath: string, markdown = ""): string {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
   if (!slug) throw new Error(`cannot derive execution branch from plan filename: ${basename(planPath)}`);
-  return `ralphex/${slug}`;
+  return `feature/${slug}`;
 }
 
 async function localBranchExists(root: string, branch: string): Promise<boolean> {

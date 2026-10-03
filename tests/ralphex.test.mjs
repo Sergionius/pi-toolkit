@@ -268,12 +268,12 @@ test("ralphex commands resolve both full plan paths and bare filenames", async (
 test("ralphex execution branch names come from dated plan filenames", () => {
   assert.equal(
     ralphex.executionBranchName("docs/plans/20260912-self-release-pipeline.md"),
-    "ralphex/self-release-pipeline",
+    "feature/self-release-pipeline",
   );
   assert.throws(() => ralphex.executionBranchName("docs/plans/2026-09-12-Добавить кеш.md"), /English plan-slug/);
   assert.equal(
     ralphex.executionBranchName("docs/plans/2026-09-12-publikatsiya-android.md", "# Публикация Android\n<!-- plan-slug: publish-android-app-bundle -->"),
-    "ralphex/publish-android-app-bundle",
+    "feature/publish-android-app-bundle",
   );
   assert.throws(() => ralphex.executionBranchName("docs/plans/publikatsiya.md", "# Публикация"), /do not transliterate/);
   assert.throws(
@@ -310,13 +310,13 @@ test("ralphex preflight can create and resume a plan branch from main", async ()
       },
     };
     const created = await ralphex.ensureExecPreflight(ctx, plan);
-    assert.equal(git("branch", "--show-current"), "ralphex/self-release-pipeline");
+    assert.equal(git("branch", "--show-current"), "feature/self-release-pipeline");
     assert.equal(created.base, initialHead);
     assert.deepEqual(selections[0], {
       title: "Run Ralphex on the default branch?",
       options: [
         "Execute on main",
-        "Create or switch to ralphex/self-release-pipeline",
+        "Create or switch to feature/self-release-pipeline",
         "Cancel",
       ],
     });
@@ -328,7 +328,7 @@ test("ralphex preflight can create and resume a plan branch from main", async ()
     git("switch", "-q", "main");
 
     const resumed = await ralphex.ensureExecPreflight(ctx, plan);
-    assert.equal(git("branch", "--show-current"), "ralphex/self-release-pipeline");
+    assert.equal(git("branch", "--show-current"), "feature/self-release-pipeline");
     assert.equal(resumed.base, resumedBase, "preflight must reread the plan after switching");
   } finally {
     await rm(temporary, { recursive: true, force: true });
@@ -354,7 +354,7 @@ for (const branch of ["main", "master", "trunk"]) {
       assert.equal(git("branch", "--show-current"), branch);
       assert.equal(prompts, 0);
       await ralphex.ensureExecPreflight(ctx, path);
-      assert.equal(git("branch", "--show-current"), "ralphex/publish-android-app-bundle");
+      assert.equal(git("branch", "--show-current"), "feature/publish-android-app-bundle");
       assert.equal(prompts, 1);
     } finally {
       await rm(temporary, { recursive: true, force: true });

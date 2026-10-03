@@ -12,7 +12,7 @@ When interactive execution starts on a default branch, replace the existing bool
 2. Create or switch to a branch derived from the plan filename.
 3. Cancel execution.
 
-For a plan named `docs/plans/20260912-self-release-pipeline.md`, the generated branch is `ralphex/self-release-pipeline`: remove the `.md` extension and a leading date in either `YYYYMMDD-` or `YYYY-MM-DD-` form, sanitize the remaining text for a Git branch component, and add the `ralphex/` prefix.
+For a plan named `docs/plans/20260912-self-release-pipeline.md`, the generated branch is `feature/self-release-pipeline`: remove the `.md` extension and a leading date in either `YYYYMMDD-` or `YYYY-MM-DD-` form, sanitize the remaining text for a Git branch component, and add the `feature/` prefix.
 
 Interactive execution on non-default branches remains unchanged. Unattended `--auto` execution also remains unchanged and continues on the current branch without prompting.
 
