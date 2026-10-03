@@ -25,6 +25,13 @@ improvise an equivalent in another VCS.
 
 `docs/backlog/<slug>.md`. The slug names the defect, not the file it lives in
 (`reopen-fallback-ignores-frontmost.md`), so it can be cited from a commit and dedupe is a filename check.
+Use concise, meaningful **English kebab-case** for new filenames, regardless of the user's language.
+Translate the meaning; never transliterate (use `publish-android-app-bundle.md`, not
+`publikatsiya-android-app-bundle.md`). The H1 and body may stay in the user's language.
+When turning an item into a plan or a new branch, choose an English slug independently rather than
+copying a legacy transliterated filename. Ralphex plans must include `<!-- plan-slug: english-task-name -->`.
+Do not automatically rename existing items, plans, or branches; preserve their references and dedupe
+by meaning and location as well as filename.
 
 ```markdown
 ---

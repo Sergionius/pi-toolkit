@@ -1,4 +1,5 @@
 import type { PlanTask } from "./plan";
+import { PLAN_NAMING_INSTRUCTIONS } from "./naming";
 
 export function autonomousPlanPrompt(request: string, retryContext?: string): string {
   return `# Ralphex autonomous planning worker
@@ -19,6 +20,8 @@ ${request.trim()}
 5. Record every material autonomous choice under ## Execution Notes. Use one bullet per choice in this form:
 - Decision: <choice>; Alternatives: <alternatives>; Reason: <reason>; Side effects: <effects or none>
 6. Use exact discovered paths. Do not invent tests or infrastructure. Include existing relevant validation commands when discoverable.
+
+${PLAN_NAMING_INSTRUCTIONS}
 
 ## Required plan structure
 

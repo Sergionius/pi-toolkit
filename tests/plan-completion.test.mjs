@@ -19,23 +19,28 @@ test("plan completion menu exposes the four actions in the requested order", () 
   ]);
 });
 
-test("plan slug transliterates Cyrillic and falls back for punctuation-only titles", () => {
-  assert.equal(plan.planSlug("# Экран профиля пользователя\n\nDetails"), "ekran-profilya-polzovatelya");
-  assert.equal(plan.planSlug("# !!!"), "plan");
+test("plan slug uses English metadata without transliterating localized titles", () => {
+  assert.equal(plan.planSlug("# Экран профиля пользователя\n<!-- plan-slug: user-profile-screen -->"), "user-profile-screen");
+  assert.throws(() => plan.planSlug("# Экран профиля пользователя"), /do not transliterate/);
+  assert.throws(() => plan.planSlug("# !!!"), /meaningful English/);
+  for (const slug of ["../escape", "русский", "Upper-Case", "a".repeat(81)]) {
+    assert.throws(() => plan.planSlug(`# Title\n<!-- plan-slug: ${slug} -->`), /plan-slug/);
+  }
+  assert.throws(() => plan.planSlug("# Title\n<!-- plan-slug: one -->\n<!-- plan-slug: two -->"), /plan-slug/);
 });
 
 test("saving a proposed plan uses the first free numeric suffix", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "pi-plan-save-"));
   try {
-    const markdown = "# Экран профиля\n\n## Summary\nДобавить экран.";
+    const markdown = "# Экран профиля\n<!-- plan-slug: user-profile -->\n\n## Summary\nДобавить экран.";
     const date = new Date(2026, 7, 30);
     const first = await plan.saveProposedPlan(cwd, markdown, date);
     const second = await plan.saveProposedPlan(cwd, markdown, date);
     const third = await plan.saveProposedPlan(cwd, markdown, date);
 
-    assert.equal(basename(first), "2026-08-30-ekran-profilya.md");
-    assert.equal(basename(second), "2026-08-30-ekran-profilya-2.md");
-    assert.equal(basename(third), "2026-08-30-ekran-profilya-3.md");
+    assert.equal(basename(first), "2026-08-30-user-profile.md");
+    assert.equal(basename(second), "2026-08-30-user-profile-2.md");
+    assert.equal(basename(third), "2026-08-30-user-profile-3.md");
     assert.equal(await readFile(second, "utf8"), `${markdown}\n`);
     assert.doesNotMatch(await readFile(second, "utf8"), /<\/?proposed_plan>/);
   } finally {

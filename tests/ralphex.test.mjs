@@ -202,6 +202,7 @@ test("ralphex model config resolves global, project, and one-run precedence", as
 test("autonomous planning output is strict and saved without overwriting", async () => {
   const temporary = await mkdtemp(join(tmpdir(), "ralphex-generated-plan-"));
   const generated = `# Добавить сепараторы
+<!-- plan-slug: add-separators -->
 
 ## Goal
 Добавить разделители.
@@ -237,8 +238,8 @@ npm test
     );
     const first = await ralphex.saveGeneratedPlan(temporary, generated, new Date(2026, 8, 11));
     const second = await ralphex.saveGeneratedPlan(temporary, generated, new Date(2026, 8, 11));
-    assert.equal(first, join(temporary, "docs", "plans", "2026-09-11-dobavit-separatory.md"));
-    assert.equal(second, join(temporary, "docs", "plans", "2026-09-11-dobavit-separatory-2.md"));
+    assert.equal(first, join(temporary, "docs", "plans", "2026-09-11-add-separators.md"));
+    assert.equal(second, join(temporary, "docs", "plans", "2026-09-11-add-separators-2.md"));
     assert.throws(
       () => ralphex.parseGeneratedPlan("<<<RALPHEX:PLAN_BLOCKED>>>\n{\"reason\":\"credentials required\"}\n<<<RALPHEX:END>>>"),
       /planning blocked: credentials required/,
@@ -269,10 +270,12 @@ test("ralphex execution branch names come from dated plan filenames", () => {
     ralphex.executionBranchName("docs/plans/20260912-self-release-pipeline.md"),
     "ralphex/self-release-pipeline",
   );
+  assert.throws(() => ralphex.executionBranchName("docs/plans/2026-09-12-Добавить кеш.md"), /English plan-slug/);
   assert.equal(
-    ralphex.executionBranchName("docs/plans/2026-09-12-Добавить кеш.md"),
-    "ralphex/добавить-кеш",
+    ralphex.executionBranchName("docs/plans/2026-09-12-publikatsiya-android.md", "# Публикация Android\n<!-- plan-slug: publish-android-app-bundle -->"),
+    "ralphex/publish-android-app-bundle",
   );
+  assert.throws(() => ralphex.executionBranchName("docs/plans/publikatsiya.md", "# Публикация"), /do not transliterate/);
   assert.throws(
     () => ralphex.executionBranchName("docs/plans/!!!.md"),
     /cannot derive execution branch/,
@@ -331,6 +334,33 @@ test("ralphex preflight can create and resume a plan branch from main", async ()
     await rm(temporary, { recursive: true, force: true });
   }
 });
+
+for (const branch of ["main", "master", "trunk"]) {
+  test(`ralphex uses English plan metadata on ${branch} and leaves auto on its current branch`, async () => {
+    const temporary = await mkdtemp(join(tmpdir(), "ralphex-english-branch-"));
+    const git = (...args) => execFileSync("git", args, { cwd: temporary, encoding: "utf8" }).trim();
+    try {
+      git("init", "-q");
+      git("config", "user.email", "ralphex@example.test");
+      git("config", "user.name", "Ralphex Test");
+      git("branch", "-M", branch);
+      const path = join(git("rev-parse", "--show-toplevel"), "publikatsiya-android.md");
+      await writeFile(path, `<!-- plan-slug: publish-android-app-bundle -->\n${sample}`);
+      git("add", ".");
+      git("commit", "-qm", "initial");
+      let prompts = 0;
+      const ctx = { cwd: temporary, ui: { select: async (_title, options) => { prompts++; return options[1]; } } };
+      await ralphex.ensureExecPreflight(ctx, path, true);
+      assert.equal(git("branch", "--show-current"), branch);
+      assert.equal(prompts, 0);
+      await ralphex.ensureExecPreflight(ctx, path);
+      assert.equal(git("branch", "--show-current"), "ralphex/publish-android-app-bundle");
+      assert.equal(prompts, 1);
+    } finally {
+      await rm(temporary, { recursive: true, force: true });
+    }
+  });
+}
 
 test("ralphex preflight creates a baseline commit for an unborn repository", async () => {
   const temporary = await mkdtemp(join(tmpdir(), "ralphex-unborn-"));

@@ -2,6 +2,8 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-c
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { Type } from "typebox";
+import { planSlug, PLAN_NAMING_INSTRUCTIONS } from "../ralphex/naming";
+export { planSlug } from "../ralphex/naming";
 import { createAutonomousPlan, parsePlanCommandArgs, type AutonomousPlanResult } from "../ralphex/index";
 import {
   currentPlanMode,
@@ -13,6 +15,8 @@ import {
 } from "../lib/plan-state";
 
 const PLAN_MODE_INSTRUCTIONS = `# Plan Mode (Conversational)
+
+${PLAN_NAMING_INSTRUCTIONS}
 
 You work in 3 phases, and you should chat your way to a great plan before finalizing it. A great plan is detailed enough to be handed to another engineer or agent for implementation. It must be decision complete, where the implementer does not need to make decisions.
 
@@ -73,6 +77,8 @@ The opening and closing tags must be on their own lines and must stay exactly <p
 const PLAN_PROMPT = (task: string) => `Plan this request in Plan Mode. Do not modify files or run mutating commands.\n\n${task}`;
 
 export const RALPHEX_PLAN_INSTRUCTIONS = `# Ralphex implementation plan creation
+
+${PLAN_NAMING_INSTRUCTIONS}
 
 Create an implementation plan for the request below. Work conversationally in the current Pi session. Your only deliverable is an accepted plan file; do not implement the requested feature.
 
@@ -159,24 +165,6 @@ const activeRalphexPlans = new Set<string>();
 
 export function extractRalphexDraft(text: string): string | undefined {
   return text.match(/<ralphex_plan>\s*([\s\S]*?)\s*<\/ralphex_plan>/i)?.[1]?.trim();
-}
-
-const CYRILLIC_TO_ASCII: Record<string, string> = {
-  а: "a", б: "b", в: "v", г: "g", д: "d", е: "e", ё: "e", ж: "zh", з: "z", и: "i", й: "y",
-  к: "k", л: "l", м: "m", н: "n", о: "o", п: "p", р: "r", с: "s", т: "t", у: "u", ф: "f",
-  х: "h", ц: "ts", ч: "ch", ш: "sh", щ: "sch", ъ: "", ы: "y", ь: "", э: "e", ю: "yu", я: "ya",
-};
-
-export function planSlug(plan: string): string {
-  const title = plan.match(/^#\s+(.+)$/m)?.[1]?.trim() ?? "plan";
-  const transliterated = [...title.toLowerCase()].map((character) => CYRILLIC_TO_ASCII[character] ?? character).join("");
-  return transliterated
-    .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 80)
-    .replace(/-+$/g, "") || "plan";
 }
 
 function localDateStamp(date: Date): string {

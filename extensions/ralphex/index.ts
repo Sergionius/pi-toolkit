@@ -14,6 +14,8 @@ const CLAUDE_WRAPPER = join(PACKAGE_ROOT, "skills", "ask-claude", "scripts", "as
 const QUESTION_PATTERN = /<<<RALPHEX:QUESTION>>>\s*\n?([\s\S]*?)\n?<<<RALPHEX:END>>>/;
 const PROGRESS_PATTERN = /<<<RALPHEX:PROGRESS>>>\s*\n?([\s\S]*?)\n?<<<RALPHEX:END>>>/g;
 const SUMMARY_PATTERN = /<<<RALPHEX:SUMMARY>>>\s*\n?([\s\S]*?)\n?<<<RALPHEX:END>>>/;
+import { explicitPlanSlug, planSlug } from "./naming";
+
 const GENERATED_PLAN_PATTERN = /<<<RALPHEX:PLAN>>>\s*\n?([\s\S]*?)\n?<<<RALPHEX:END>>>/;
 const PLAN_BLOCKED_PATTERN = /<<<RALPHEX:PLAN_BLOCKED>>>\s*\n?([\s\S]*?)\n?<<<RALPHEX:END>>>/;
 const TASK_RETRIES = 1;
@@ -177,11 +179,16 @@ function reportProgress(pi: ExtensionAPI, ctx: ExtensionCommandContext, title: s
   pi.events.emit("ralphex:progress", { activity: compact ? `${title} · ${compact}` : title });
 }
 
-function executionBranchName(planPath: string): string {
+function executionBranchName(planPath: string, markdown = ""): string {
+  const explicit = explicitPlanSlug(markdown);
+  if (explicit) return `ralphex/${explicit}`;
+  // Legacy English filenames remain resumable; localized plans need a translated slug.
+  if (markdown && /[^\x20-\x7e]/.test(markdown.match(/^#\s+(.+)$/m)?.[1] ?? "")) return `ralphex/${planSlug(markdown)}`;
   const stem = basename(planPath, ".md").replace(/^(?:\d{8}|\d{4}-\d{2}-\d{2})-/, "");
+  if (/[^\x20-\x7e]/.test(stem)) throw new Error("Add an English plan-slug to the plan before creating a branch");
   const slug = stem
     .toLowerCase()
-    .replace(/[^\p{L}\p{N}]+/gu, "-")
+    .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
   if (!slug) throw new Error(`cannot derive execution branch from plan filename: ${basename(planPath)}`);
   return `ralphex/${slug}`;
@@ -223,7 +230,7 @@ async function ensureExecPreflight(ctx: ExtensionCommandContext, planPath: strin
 
   const branch = await git(root, ["branch", "--show-current"]);
   if (["main", "master", "trunk"].includes(branch) && !auto) {
-    const executionBranch = executionBranchName(planPath);
+    const executionBranch = executionBranchName(planPath, initialMarkdown);
     const executeHere = `Execute on ${branch}`;
     const useExecutionBranch = `Create or switch to ${executionBranch}`;
     const choice = await ctx.ui.select(
@@ -621,24 +628,9 @@ async function executePlan(
   return { root, planPath: resolved.path, tasksCompleted: completed, summaries };
 }
 
-const CYRILLIC_TO_ASCII: Record<string, string> = {
-  а: "a", б: "b", в: "v", г: "g", д: "d", е: "e", ё: "e", ж: "zh", з: "z", и: "i", й: "y",
-  к: "k", л: "l", м: "m", н: "n", о: "o", п: "p", р: "r", с: "s", т: "t", у: "u", ф: "f",
-  х: "h", ц: "ts", ч: "ch", ш: "sh", щ: "sch", ъ: "", ы: "y", ь: "", э: "e", ю: "yu", я: "ya",
-};
-
-function generatedPlanSlug(markdown: string): string {
-  const title = markdown.match(/^#\s+(.+)$/m)?.[1]?.trim() ?? "plan";
-  return [...title.toLowerCase()].map((character) => CYRILLIC_TO_ASCII[character] ?? character).join("")
-    .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 80)
-    .replace(/-+$/g, "") || "plan";
-}
 
 function validateGeneratedPlan(markdown: string): void {
+  planSlug(markdown);
   const required = ["Goal", "Context", "Scope", "Implementation Steps", "Validation", "Acceptance Criteria", "Execution Notes"];
   for (const heading of required) {
     if (!new RegExp(`^## ${heading}\\s*$`, "m").test(markdown)) {
@@ -684,7 +676,7 @@ function dateStamp(date: Date): string {
 async function saveGeneratedPlan(root: string, markdown: string, date = new Date()): Promise<string> {
   const directory = join(root, "docs", "plans");
   await mkdir(directory, { recursive: true });
-  const stem = `${dateStamp(date)}-${generatedPlanSlug(markdown)}`;
+  const stem = `${dateStamp(date)}-${planSlug(markdown)}`;
   for (let suffix = 1; ; suffix++) {
     const path = join(directory, `${stem}${suffix === 1 ? "" : `-${suffix}`}.md`);
     try {
