@@ -28,6 +28,7 @@ function fakePi() {
     notifications,
     ui,
     api: {
+      getCommands: () => [{ name: "ralphex-exec" }],
       on(event, handler) {
         handlers.push({ event, handler });
       },
@@ -38,7 +39,7 @@ function fakePi() {
         userMessages.push({ message, options });
       },
     },
-    ctx: { ui, isIdle: () => true },
+    ctx: { ui, isIdle: () => true, hasPendingMessages: () => false },
   };
 }
 
@@ -153,7 +154,7 @@ test("later command schedules commands with template expansion and plain message
     options: { deliverAs: "followUp" },
   }, "plain messages do not expand templates");
   assert.match(pi.notifications[0].message, /^Scheduled \/later #1 in 1s/);
-  assert.match(pi.notifications.at(-1).message, /^\/later #2 fired: check the build/);
+  assert.match(pi.notifications.at(-1).message, /^\/later #2 dispatched: check the build/);
   assert.equal(pi.statusSets.at(-1).text, undefined, "status line clears when the queue empties");
 });
 

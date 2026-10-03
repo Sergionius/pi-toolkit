@@ -1,4 +1,4 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
 const UNIT_MS: Record<string, number> = { h: 3_600_000, m: 60_000, s: 1_000 };
 const MAX_DELAY_MS = 24 * UNIT_MS.h;
@@ -82,15 +82,25 @@ export class LaterScheduler {
   private tasks = new Map<number, { task: LaterTask; timer: ReturnType<typeof setTimeout> }>();
   private nextId = 1;
 
-  constructor(private readonly onFire: (task: LaterTask) => void) {}
+  constructor(
+    private readonly onFire: (task: LaterTask) => void,
+    private readonly canFire: () => boolean = () => true,
+  ) {}
 
   schedule(delayMs: number, payload: string, now: number = Date.now()): LaterTask {
     const id = this.nextId++;
     const task: LaterTask = { id, payload, fireAt: now + delayMs };
-    const timer = setTimeout(() => {
+    const fire = () => {
+      const entry = this.tasks.get(id);
+      if (!entry) return;
+      if (!this.canFire()) {
+        entry.timer = setTimeout(fire, 250);
+        return;
+      }
       this.tasks.delete(id);
       this.onFire(task);
-    }, delayMs);
+    };
+    const timer = setTimeout(fire, delayMs);
     this.tasks.set(id, { task, timer });
     return task;
   }
@@ -136,6 +146,9 @@ export function sendLaterPayload(pi: ExtensionAPI, payload: string): void {
 
 export default function (pi: ExtensionAPI) {
   let latestUi: MinimalUi | null = null;
+  let context: ExtensionCommandContext | null = null;
+  let ticker: ReturnType<typeof setInterval> | undefined;
+  let compacting = false;
 
   const safeNotify = (message: string, type?: "info" | "warning" | "error") => {
     try {
@@ -149,25 +162,52 @@ export default function (pi: ExtensionAPI) {
     try {
       if (!latestUi) return;
       const nextFireAt = scheduler.nextFireAt();
+      if (nextFireAt === null && ticker) {
+        clearInterval(ticker);
+        ticker = undefined;
+      }
       latestUi.setStatus(
         "later",
-        nextFireAt === null ? undefined : `later: ${scheduler.size} pending, next in ${formatRemaining(nextFireAt - Date.now())}`,
+        nextFireAt === null ? undefined : `later: ${scheduler.size} pending, ${nextFireAt <= Date.now() ? "waiting for idle" : `next in ${formatRemaining(nextFireAt - Date.now())}`}`,
       );
     } catch {
       // Status is cosmetic; ignore stale context failures.
     }
   };
 
+  const supported = (payload: string) => {
+    if (!payload.startsWith("/")) return true;
+    const name = payload.slice(1).split(/\s/, 1)[0];
+    return name === "compact" || pi.getCommands().some((command) => command.name === name);
+  };
+
   const scheduler = new LaterScheduler((task) => {
-    safeNotify(`/later #${task.id} fired: ${previewPayload(task.payload)}`, "info");
-    sendLaterPayload(pi, task.payload);
-    updateStatus();
-  });
+    try {
+      if (!supported(task.payload)) throw new Error("Command is unavailable or unsupported");
+      safeNotify(`/later #${task.id} dispatched: ${previewPayload(task.payload)}`, "info");
+      if (/^\/compact(?:\s|$)/.test(task.payload)) {
+        compacting = true;
+        context!.compact({
+          customInstructions: task.payload.slice("/compact".length).trim() || undefined,
+          onComplete: () => { compacting = false; },
+          onError: (error) => { compacting = false; safeNotify(error.message, "error"); },
+        });
+      } else {
+        sendLaterPayload(pi, task.payload);
+      }
+    } catch (error) {
+      compacting = false;
+      safeNotify(`/later #${task.id} failed: ${String(error)}`, "error");
+    } finally {
+      updateStatus();
+    }
+  }, () => !!context && !compacting && context.isIdle() && !context.hasPendingMessages());
 
   pi.registerCommand("later", {
     description: "Run a command or send a message after a delay, e.g. /later 30m /ralphex-exec plan.md",
     handler: async (args, ctx) => {
       latestUi = ctx.ui ?? null;
+      context = ctx;
       const plan = parseLaterArgs(args);
 
       if (plan.action === "usage") {
@@ -193,7 +233,12 @@ export default function (pi: ExtensionAPI) {
         return;
       }
 
+      if (!supported(plan.payload)) {
+        ctx.ui.notify("Unsupported command. /later supports loaded extension, skill and prompt commands, plus /compact; other built-in commands cannot be scheduled.", "warning");
+        return;
+      }
       const task = scheduler.schedule(plan.delayMs, plan.payload);
+      if (!ticker) ticker = setInterval(updateStatus, 1_000);
       ctx.ui.notify(`Scheduled /later #${task.id} in ${formatRemaining(plan.delayMs)}: ${previewPayload(task.payload)}`, "info");
       updateStatus();
     },
@@ -207,5 +252,11 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("session_before_switch", cancelOnSessionChange);
   pi.on("session_before_fork", cancelOnSessionChange);
-  pi.on("session_shutdown", () => scheduler.clear());
+  pi.on("session_shutdown", () => {
+    scheduler.clear();
+    updateStatus();
+    context = null;
+    latestUi = null;
+    compacting = false;
+  });
 }

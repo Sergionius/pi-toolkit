@@ -14,11 +14,11 @@ A new `extensions/later.ts` registers a single universal command:
 
 The delay is a concatenation of `h`, `m`, and `s` units (`90s`, `45m`, `1h30m`), capped at 24 hours to stay far from the `setTimeout` 32-bit overflow range.
 
-At fire time the extension calls `pi.sendUserMessage(payload, { expandPromptTemplates: <payload starts with "/">, deliverAs: "followUp" })`. `expandPromptTemplates` dispatches extension commands, skill commands, and prompt templates instead of sending the text to the model. `deliverAs: "followUp"` is ignored while the agent is idle and queues the message behind active work otherwise, so one call covers both cases without holding a stale context.
+At fire time the scheduler first checks `ctx.isIdle()` and `ctx.hasPendingMessages()`. Expired tasks remain listed and cancellable while waiting, with readiness checked every 250ms. This check is necessary because pi dispatches extension commands before processing `deliverAs: "followUp"`. Commands and messages then use `pi.sendUserMessage`, with template expansion enabled only for slash commands. The loaded command registry validates extension, skill, and prompt names at scheduling and dispatch. `/compact` uses `ctx.compact()` with optional custom instructions and blocks further dispatch until its completion callback; other built-in and unknown commands are rejected rather than sent to the model as text.
 
 State is in-memory only: a `LaterScheduler` keeps a `Map` of tasks with incrementing integer ids and real `setTimeout` timers. Timers are created inside the command handler, never in the extension factory. `session_shutdown` clears all timers; `session_before_switch` and `session_before_fork` cancel pending tasks with a notification, because delayed payloads usually reference the session they were created in. `/reload` replaces the extension runtime and therefore drops pending tasks; this is a documented limitation of the in-memory design.
 
-Scheduling and firing report through `ctx.ui.notify`, and a `later: N pending` status line via `ctx.ui.setStatus` reflects the queue. UI calls at fire time use the most recently seen context and are guarded, since the context may have been replaced.
+Scheduling and dispatch report through `ctx.ui.notify`, and a `later: N pending` status line updates every second while tasks exist. Overdue tasks show `waiting for idle`. Timers and status updates are cleared when the queue empties or the session shuts down. UI calls are guarded; lifecycle cleanup prevents old-session tasks from dispatching after replacement.
 
 Parsing, formatting, and the scheduler are exported pure helpers so tests do not need timers longer than milliseconds.
 

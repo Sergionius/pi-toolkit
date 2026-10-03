@@ -13,7 +13,7 @@
 - `commit.ts` — global `/commit` command: stages all changes and creates a local commit using the model configured by `PI_COMMIT_MODEL`, without pushing.
 - `figma-context.ts` — `figma_get_screen_context` tool.
 - `flutter-refresh.ts` — automatic Flutter refresh after successful edits: model changes, added class fields/constructor parameters, and Dart file rewrites trigger hot restart; ordinary UI edits use hot reload.
-- `later.ts` — `/later <delay> <command or message>` runs any command or message after a delay (`/later 30m /ralphex-exec plan.md`, `/later 1h30m check the build`); in-memory per session, with `/later list` and `/later cancel <id|all>`.
+- `later.ts` — `/later <delay> <command or message>` schedules loaded extension/skill/prompt commands or plain messages (`/later 30m /ralphex-exec plan.md`, `/later 1h30m check the build`). Delays use `h`/`m`/`s`, up to 24h. Waits for the agent to be idle; overdue tasks remain cancellable with `/later cancel <id|all>` and visible in `/later list`. `/compact [instructions]` is supported explicitly; other built-in and unknown commands are rejected. Countdown updates every second. In-memory only: switching/forking sessions, shutdown, or `/reload` clears tasks.
 - `toolkit.ts` — toolkit diagnostics and VS Code bridge synchronization.
 
 ### Prompt templates
