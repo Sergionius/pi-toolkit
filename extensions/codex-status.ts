@@ -1,5 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { spawn } from "node:child_process";
+import { runCommand } from "./ralphex/process";
+import { redactDiagnostic } from "./ralphex/diagnostics";
 import { randomUUID } from "node:crypto";
 import { readCurrentCodexCredential } from "./lib/codex-auth";
 
@@ -50,6 +51,28 @@ async function readPiCodexAuth() {
   };
 }
 
+export const DEFAULT_CODEX_USER_AGENT = "codex-cli/0.144.1";
+
+export async function codexRequest(script: string, env: NodeJS.ProcessEnv, runner = runCommand): Promise<string> {
+  const userAgent = process.env.PI_CODEX_USER_AGENT?.trim() || DEFAULT_CODEX_USER_AGENT;
+  if (/[\r\n]/.test(userAgent)) throw new Error("Invalid PI_CODEX_USER_AGENT");
+  const result = await runner({ command: "python3", args: ["-c", script], cwd: process.cwd(), timeoutMs: 25000,
+    env: { ...process.env, ...env, PI_CODEX_USER_AGENT: userAgent } });
+  if (result.code !== 0) {
+    const text = (result.stderr || `python exited ${result.code}`).split(env.PI_CODEX_ACCESS_TOKEN || "\0").join("[REDACTED]");
+    throw new Error(`pi Codex request failed: ${redactDiagnostic(text)}`);
+  }
+  return result.stdout;
+}
+
+export function parseUsage(text: string): Usage {
+  try {
+    const parsed = JSON.parse(text);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error();
+    return parsed;
+  } catch { throw new Error("Codex usage returned invalid JSON"); }
+}
+
 async function fetchUsage(): Promise<Usage> {
   const auth = await readPiCodexAuth();
 
@@ -64,7 +87,7 @@ account_id = os.environ.get("PI_CODEX_ACCOUNT_ID", "")
 headers = {
     "Authorization": "Bearer " + token,
     "Accept": "application/json",
-    "User-Agent": "codex-cli/0.144.1",
+    "User-Agent": os.environ["PI_CODEX_USER_AGENT"],
     "Origin": "https://chatgpt.com",
     "Referer": "https://chatgpt.com/codex/settings/usage",
 }
@@ -80,38 +103,11 @@ except urllib.error.HTTPError as error:
     sys.exit(1)
 `;
 
-  const output = await new Promise<string>((resolve, reject) => {
-    const child = spawn("python3", ["-c", script], {
-      env: {
-        ...process.env,
-        PI_CODEX_USAGE_URL: USAGE_URL,
-        PI_CODEX_ACCESS_TOKEN: auth.accessToken,
-        ...(auth.accountId ? { PI_CODEX_ACCOUNT_ID: auth.accountId } : {}),
-      },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-
-    let stdout = "";
-    let stderr = "";
-    const timer = setTimeout(() => {
-      child.kill("SIGTERM");
-      reject(new Error("pi Codex usage request timed out"));
-    }, 25_000);
-
-    child.stdout.on("data", (chunk) => (stdout += chunk.toString("utf8")));
-    child.stderr.on("data", (chunk) => (stderr += chunk.toString("utf8")));
-    child.on("error", (error) => {
-      clearTimeout(timer);
-      reject(error);
-    });
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      if (code === 0) resolve(stdout);
-      else reject(new Error(`pi Codex usage request failed: ${stderr || `python exited ${code}`}`));
-    });
-  });
-
-  return JSON.parse(output) as Usage;
+  return parseUsage(await codexRequest(script, {
+    PI_CODEX_USAGE_URL: USAGE_URL,
+    PI_CODEX_ACCESS_TOKEN: auth.accessToken,
+    PI_CODEX_ACCOUNT_ID: auth.accountId || "",
+  }));
 }
 
 async function consumeResetCredit(redeemRequestId: string): Promise<void> {
@@ -128,7 +124,7 @@ headers = {
     "Authorization": "Bearer " + token,
     "Accept": "application/json",
     "Content-Type": "application/json",
-    "User-Agent": "codex-cli/0.144.1",
+    "User-Agent": os.environ["PI_CODEX_USER_AGENT"],
     "Origin": "https://chatgpt.com",
     "Referer": "https://chatgpt.com/codex/settings/usage",
 }
@@ -144,34 +140,12 @@ except urllib.error.HTTPError as error:
     sys.exit(1)
 `;
 
-  await new Promise<void>((resolve, reject) => {
-    const child = spawn("python3", ["-c", script], {
-      env: {
-        ...process.env,
-        PI_CODEX_RESET_URL: RESET_CREDIT_CONSUME_URL,
-        PI_CODEX_ACCESS_TOKEN: auth.accessToken,
-        PI_CODEX_REDEEM_REQUEST_ID: redeemRequestId,
-        ...(auth.accountId ? { PI_CODEX_ACCOUNT_ID: auth.accountId } : {}),
-      },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-
-    let stderr = "";
-    const timer = setTimeout(() => {
-      child.kill("SIGTERM");
-      reject(new Error("pi Codex reset-credit request timed out"));
-    }, 25_000);
-
-    child.stderr.on("data", (chunk) => (stderr += chunk.toString("utf8")));
-    child.on("error", (error) => {
-      clearTimeout(timer);
-      reject(error);
-    });
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      if (code === 0) resolve();
-      else reject(new Error(`pi Codex reset-credit request failed: ${stderr || `python exited ${code}`}`));
-    });
+  // Never retry a consumption request: a timeout may mean the credit was spent.
+  await codexRequest(script, {
+    PI_CODEX_RESET_URL: RESET_CREDIT_CONSUME_URL,
+    PI_CODEX_ACCESS_TOKEN: auth.accessToken,
+    PI_CODEX_REDEEM_REQUEST_ID: redeemRequestId,
+    PI_CODEX_ACCOUNT_ID: auth.accountId || "",
   });
 }
 

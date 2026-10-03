@@ -1,7 +1,10 @@
-import { spawn, execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, chmodSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
+import { basename } from "node:path";
+import { processTree } from "../lib/process-tree";
+import { createWorkerLog } from "./worker-logs";
+import { redactDiagnostic } from "./diagnostics";
+export { redactDiagnostic } from "./diagnostics";
 
 export type ProcessResult = {
   code: number;
@@ -11,14 +14,6 @@ export type ProcessResult = {
   workerError?: string;
   logPath?: string;
 };
-
-export function redactDiagnostic(text: string): string {
-  for (const [key, value] of Object.entries(process.env)) {
-    if (/token|secret|password|api_?key|credential/i.test(key) && value && value.length >= 4) text = text.split(value).join("[REDACTED]");
-  }
-  return text.replace(/(Bearer\s+)[^\s"\\]+/gi, "$1[REDACTED]")
-    .replace(/((?:api[_-]?key|token|password|secret)["']?\s*[:=]\s*["']?)[^\s"',}]+/gi, "$1[REDACTED]");
-}
 
 export function taskFailures(result: ProcessResult, unchecked: number | undefined, before: string, after: string, dirty: string[]): string[] {
   return [
@@ -33,7 +28,7 @@ export function taskFailures(result: ProcessResult, unchecked: number | undefine
 export function workerDiagnostic(result: ProcessResult, failures: string[] = []): string {
   return redactDiagnostic([
     ...failures.map((reason) => `- ${reason}`),
-    result.workerError && `worker error: ${result.workerError}`,
+    result.workerError && !failures.includes(`worker error: ${result.workerError}`) && `worker error: ${result.workerError}`,
     `exit code: ${result.code}`,
     result.logPath && `diagnostic log: ${result.logPath}`,
     result.assistantText ? `assistant: ${result.assistantText.slice(-3000)}` : "empty assistant response",
@@ -82,9 +77,8 @@ export async function runPiWorker(options: {
   const idleMs = options.idleTimeoutMs ?? Number(process.env.RALPHEX_WORKER_IDLE_TIMEOUT_MS ?? 600000);
   const toolMs = options.toolTimeoutMs ?? Number(process.env.RALPHEX_WORKER_TOOL_TIMEOUT_MS ?? 0);
   for (const value of [idleMs, toolMs]) if (!Number.isFinite(value) || value < 0) throw new Error("Worker timeouts must be nonnegative milliseconds (0 disables)");
-  const directory = mkdtempSync(join(tmpdir(), "ralphex-worker-"));
-  chmodSync(directory, 0o700);
-  const logPath = join(directory, "attempt.json");
+  const log = createWorkerLog();
+  const logPath = log.path;
   const invocation = options.invocation ?? piInvocation(args);
   return new Promise((resolve) => {
     const child = spawn(invocation.command, invocation.args, {
@@ -101,43 +95,14 @@ export async function runPiWorker(options: {
     let terminalError: string | undefined;
     let lastActivity = Date.now();
     const tools = new Map<string, number>();
-    let killTimer: ReturnType<typeof setTimeout> | undefined;
-    const descendants = new Set<number>();
-    const killTree = (signal: NodeJS.Signals) => {
-      if (!child.pid) return;
-      // Pi bash tools use their own process groups. Capture the whole tree
-      // before TERM reparents children, then retain those PIDs for KILL.
-      if (process.platform !== "win32") {
-        try {
-          const rows = execFileSync("ps", ["-axo", "pid=,ppid="], { encoding: "utf8" }).trim().split("\n")
-            .map((line) => line.trim().split(/\s+/).map(Number));
-          const parents = new Set([child.pid, ...descendants]);
-          let changed = true;
-          while (changed) {
-            changed = false;
-            for (const [pid, ppid] of rows) if (parents.has(ppid) && !parents.has(pid)) {
-              parents.add(pid); descendants.add(pid); changed = true;
-            }
-          }
-        } catch (error) { stderr += `Cannot enumerate worker descendants: ${String(error)}\n`; }
-        for (const pid of [...descendants].reverse()) {
-          try { process.kill(-pid, signal); } catch { /* Not a group leader. */ }
-          try { process.kill(pid, signal); } catch { /* Already exited. */ }
-        }
-      }
-      try {
-        if (process.platform === "win32") spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"]);
-        else process.kill(-child.pid, signal);
-      } catch { /* Already exited. */ }
-    };
+    const tree = processTree(child, options.killGraceMs, (message) => { stderr += `${message}\n`; });
     const timer = setInterval(() => {
       if (terminalError) return;
       const now = Date.now();
       const toolExpired = toolMs > 0 && [...tools.values()].some((start) => now - start >= toolMs);
       if (toolExpired || (tools.size === 0 && idleMs > 0 && now - lastActivity >= idleMs)) {
         terminalError = `watchdog: ${toolExpired ? "tool execution" : "worker inactivity"} timeout (${toolExpired ? toolMs : idleMs}ms)`;
-        killTree("SIGTERM");
-        killTimer = setTimeout(() => killTree("SIGKILL"), options.killGraceMs ?? 5000);
+        tree.stop();
       }
     }, Math.max(10, Math.min(1000, idleMs || 1000, toolMs || 1000)));
     let finished = false;
@@ -145,11 +110,10 @@ export async function runPiWorker(options: {
       if (finished) return;
       finished = true;
       clearInterval(timer);
-      // Kill remaining descendants even if the leader exited on SIGTERM.
-      if (killTimer) { clearTimeout(killTimer); killTree("SIGKILL"); }
+      tree.dispose();
       const result = { code, stdout, stderr, assistantText, workerError: terminalError ?? workerError, logPath };
       try {
-        writeFileSync(logPath, redactDiagnostic(JSON.stringify({ ...result, cwd: options.cwd, model: options.model }, null, 2)), { mode: 0o600, flag: "wx" });
+        log.finish({ ...result, cwd: options.cwd, model: options.model });
       } catch (error) {
         result.workerError = `${result.workerError ?? ""}\nCannot save diagnostic log: ${String(error)}`;
       }
@@ -222,26 +186,33 @@ export async function runCommand(options: {
   cwd: string;
   stdin?: string;
   timeoutMs?: number;
+  killGraceMs?: number;
+  env?: NodeJS.ProcessEnv;
 }): Promise<ProcessResult> {
   return new Promise((resolve) => {
     const child = spawn(options.command, options.args, {
       cwd: options.cwd,
+      env: options.env,
       shell: false,
+      detached: process.platform !== "win32",
       stdio: [options.stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
     });
     let stdout = "";
     let stderr = "";
     let settled = false;
+    let timedOut = false;
+    const tree = processTree(child, options.killGraceMs, (message) => { stderr += `${message}\n`; });
     const finish = (code: number) => {
       if (settled) return;
       settled = true;
       if (timer) clearTimeout(timer);
-      resolve({ code, stdout, stderr, assistantText: stdout.trim() });
+      tree.dispose();
+      resolve({ code: timedOut ? 124 : code, stdout, stderr, assistantText: stdout.trim() });
     };
     const timer = options.timeoutMs ? setTimeout(() => {
+      timedOut = true;
       stderr += `process timed out after ${options.timeoutMs}ms\n`;
-      child.kill("SIGTERM");
-      setTimeout(() => child.kill("SIGKILL"), 5000).unref();
+      tree.stop();
     }, options.timeoutMs) : undefined;
 
     child.stdout.on("data", (chunk) => { stdout += chunk.toString(); });
