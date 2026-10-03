@@ -1,6 +1,7 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { readFile, writeFile, rm } from "node:fs/promises";
+import { figmaCache } from "./lib/figma-cache";
 import { existsSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
 	DEFAULT_MAX_BYTES,
@@ -78,24 +79,26 @@ export default function figmaContext(pi: ExtensionAPI) {
 			const parsed = parseFigmaUrl(params.url);
 			const scale = params.scale ?? 2;
 			const format = normalizeFormat(params.format);
-			const safeNode = parsed.nodeId.replace(/:/g, "-");
-			const cacheDir = resolve(ctx.cwd, ".pi", "figma-cache", parsed.fileKey, safeNode);
+			if (!Number.isFinite(scale) || scale <= 0 || scale > 4) throw new Error("Figma scale must be between 0 and 4");
+			const cache = await figmaCache(JSON.stringify([ctx.cwd, parsed.fileKey, parsed.nodeId, scale, format]));
+			const cached = !params.force ? await cache.current(parsed.nodeId) : undefined;
+			const reusable = cached && existsSync(join(cached, `screenshot.${format}`)) ? cached : undefined;
+			const cacheDir = reusable || await cache.create();
+			let published = Boolean(reusable);
+			try {
 			const nodeJsonPath = join(cacheDir, "node.json");
 			const imagePath = join(cacheDir, `screenshot.${format}`);
 			const cssPath = join(cacheDir, "screen.css");
 			const summaryPath = join(cacheDir, "summary.md");
 
-			await mkdir(cacheDir, { recursive: true });
-
 			onUpdate?.({ content: [{ type: "text", text: "Fetching Figma node…" }] });
 			const nodePayload =
-				!params.force && existsSync(nodeJsonPath)
+				reusable
 					? JSON.parse(await readFile(nodeJsonPath, "utf8"))
 					: await figmaJson(`${FIGMA_API}/files/${parsed.fileKey}/nodes?ids=${encodeURIComponent(parsed.nodeId)}`, token, signal);
-			await writeFile(nodeJsonPath, JSON.stringify(nodePayload, null, 2), "utf8");
-
 			const document = nodePayload?.nodes?.[parsed.nodeId]?.document as FigmaNode | undefined;
 			if (!document) throw new Error(`Figma node not found: ${parsed.nodeId}`);
+			if (!reusable) await writeFile(nodeJsonPath, JSON.stringify(nodePayload, null, 2), { encoding: "utf8", mode: 0o600 });
 
 			onUpdate?.({ content: [{ type: "text", text: "Exporting screenshot…" }] });
 			let screenshotPath: string | undefined;
@@ -106,10 +109,11 @@ export default function figmaContext(pi: ExtensionAPI) {
 					signal,
 				);
 				const imageUrl = imagePayload?.images?.[parsed.nodeId];
+				if (!imageUrl) throw new Error("Figma did not return an image export URL");
 				if (imageUrl) {
 					const image = await fetch(imageUrl, { signal });
 					if (!image.ok) throw new Error(`Failed to download Figma image: ${image.status} ${image.statusText}`);
-					await writeFile(imagePath, Buffer.from(await image.arrayBuffer()));
+					await writeFile(imagePath, Buffer.from(await image.arrayBuffer()), { mode: 0o600 });
 					screenshotPath = imagePath;
 				}
 			} else {
@@ -125,8 +129,12 @@ export default function figmaContext(pi: ExtensionAPI) {
 				screenshotPath,
 				cssPath,
 			});
-			await writeFile(cssPath, css, "utf8");
-			await writeFile(summaryPath, summary, "utf8");
+			if (!reusable) {
+				await writeFile(cssPath, css, { encoding: "utf8", mode: 0o600 });
+				await writeFile(summaryPath, summary, { encoding: "utf8", mode: 0o600 });
+				await cache.publish(cacheDir);
+				published = true;
+			}
 
 			const fullText = `${summary}\n\n## Generated CSS\n\n\`\`\`css\n${css}\n\`\`\`\n`;
 			const truncation = truncateHead(fullText, { maxBytes: DEFAULT_MAX_BYTES, maxLines: DEFAULT_MAX_LINES });
@@ -154,6 +162,9 @@ export default function figmaContext(pi: ExtensionAPI) {
 					truncated: truncation.truncated,
 				} satisfies FigmaDetails,
 			};
+			} finally {
+				if (!published) await rm(cacheDir, { recursive: true, force: true });
+			}
 		},
 
 		renderCall(args, theme) {
@@ -180,11 +191,12 @@ function extractFigmaUrls(text: string): string[] {
 
 function parseFigmaUrl(input: string): { fileKey: string; nodeId: string } {
 	const url = new URL(input);
+	if (!/^https?:$/.test(url.protocol) || !/^(www\.)?figma\.com$/.test(url.hostname)) throw new Error("Expected a Figma URL");
 	const parts = url.pathname.split("/").filter(Boolean);
 	const fileKey = parts[1];
 	const nodeParam = url.searchParams.get("node-id");
-	if (!fileKey) throw new Error("Could not parse Figma file key from URL");
-	if (!nodeParam) throw new Error("Figma URL must include node-id");
+	if (!fileKey || !/^[a-zA-Z0-9]+$/.test(fileKey)) throw new Error("Could not parse Figma file key from URL");
+	if (!nodeParam || !/^\d+[-:]\d+$/.test(nodeParam)) throw new Error("Figma URL must include a valid node-id");
 	return { fileKey, nodeId: nodeParam.replace(/-/g, ":") };
 }
 
