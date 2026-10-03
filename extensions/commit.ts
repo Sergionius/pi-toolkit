@@ -162,11 +162,14 @@ export async function commitAllChanges(
   cwd: string,
   exec: Exec,
   makeMessage: (diff: string) => Promise<string> = generateCommitMessage,
+  previewUntracked: (paths: string[]) => void = () => {},
 ): Promise<CommitResult> {
   const root = await requireSafeRepository(exec, cwd);
   const status = await requireSuccess(exec, root, "git", ["status", "--porcelain"]);
   if (!status.stdout.trim()) return { committed: false, reason: "clean" };
 
+  const untracked = (await requireSuccess(exec, root, "git", ["ls-files", "--others", "--exclude-standard", "-z"])).stdout.split("\0").filter(Boolean);
+  if (untracked.length) previewUntracked(untracked);
   await requireSuccess(exec, root, "git", ["add", "."]);
   const diff = (await requireSuccess(exec, root, "git", [
     "diff", "--cached", "--no-ext-diff", "--stat", "--patch", "--find-renames",
@@ -189,7 +192,10 @@ export default function (pi: ExtensionAPI) {
       await ctx.waitForIdle();
       ctx.ui.setStatus("pi-toolkit-commit", "Generating commit…");
       try {
-        const result = await commitAllChanges(ctx.cwd, (command, args, options) => pi.exec(command, args, options));
+        const result = await commitAllChanges(ctx.cwd, (command, args, options) => pi.exec(command, args, options), generateCommitMessage, (paths) => {
+          const shown = paths.slice(0, 30).map((path) => `- ${JSON.stringify(path)}`).join("\n");
+          ctx.ui.notify(`/commit will include ${paths.length} untracked file(s):\n${shown}${paths.length > 30 ? `\n… and ${paths.length - 30} more` : ""}`, "warning");
+        });
         if (!result.committed) {
           ctx.ui.notify("Working tree is clean; nothing to commit", "info");
           return;

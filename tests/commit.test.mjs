@@ -57,6 +57,7 @@ test("commitAllChanges stages the repository root, commits once, and never pushe
 
     await writeFile(join(repository, "tracked.txt"), "after\n", "utf8");
     await writeFile(join(repository, "new.txt"), "new\n", "utf8");
+    await writeFile(join(repository, "space and\nnewline.txt"), "new\n", "utf8");
     await mkdir(join(repository, "nested"));
     const commands = [];
     const recordingExec = async (command, args, options) => {
@@ -64,6 +65,7 @@ test("commitAllChanges stages the repository root, commits once, and never pushe
       return run(command, args, options);
     };
     let suppliedDiff = "";
+    let preview;
     const result = await commitExtension.commitAllChanges(
       join(repository, "nested"),
       recordingExec,
@@ -71,8 +73,13 @@ test("commitAllChanges stages the repository root, commits once, and never pushe
         suppliedDiff = diff;
         return "feat(test): commit all changes";
       },
+      (paths) => {
+        assert.equal(commands.some((command) => command[1] === "add"), false);
+        preview = paths;
+      },
     );
 
+    assert.deepEqual(preview, ["new.txt", "space and\nnewline.txt"]);
     assert.equal(result.committed, true);
     assert.equal(result.message, "feat(test): commit all changes");
     assert.match(suppliedDiff, /tracked\.txt/);

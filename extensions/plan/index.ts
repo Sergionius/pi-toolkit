@@ -2,6 +2,7 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-c
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { Type } from "typebox";
+import { looksMutating } from "../lib/plan-shell";
 import { planSlug, PLAN_NAMING_INSTRUCTIONS } from "../ralphex/naming";
 export { planSlug } from "../ralphex/naming";
 import { createAutonomousPlan, parsePlanCommandArgs, type AutonomousPlanResult } from "../ralphex/index";
@@ -234,11 +235,11 @@ async function sendPrompt(pi: ExtensionAPI, ctx: ExtensionCommandContext | any, 
 }
 
 async function implementApprovedPlan(pi: ExtensionAPI, ctx: ExtensionCommandContext | any) {
-  const store = loadStore();
+  const store = await loadStore();
   const id = threadId(ctx);
   const planMode = store.planModes?.[id];
 
-  setPlanMode(ctx, false);
+  await setPlanMode(ctx, false);
   ctx.ui.notify("Leaving Plan mode; implementing approved plan", "info");
   const prompt = planMode?.lastProposedPlan
     ? `Plan Mode is now finished. Ignore any earlier Plan Mode / non-mutating-only instructions from the planning turn and implement this approved plan:\n\n${planMode.lastProposedPlan}`
@@ -346,7 +347,7 @@ export async function startRalphexPlan(
     }
   }
 
-  disablePlanMode(ctx, false);
+  await disablePlanMode(ctx, false);
   activeRalphexPlans.add(threadId(ctx));
   ctx.ui.notify("Starting /ralphex-plan", "info");
   await sendPrompt(pi, ctx, buildRalphexPlanPrompt(request));
@@ -354,7 +355,7 @@ export async function startRalphexPlan(
 
 export default function (pi: ExtensionAPI) {
   pi.on("before_agent_start", async (event, ctx) => {
-    if (!currentPlanMode(ctx)?.active) return;
+    if (!(await currentPlanMode(ctx))?.active) return;
     return { systemPrompt: `${event.systemPrompt}\n\n${PLAN_MODE_INSTRUCTIONS}` };
   });
 
@@ -385,28 +386,28 @@ export default function (pi: ExtensionAPI) {
     }
 
     const proposedPlan = extractProposedPlan(assistantText);
-    const planMode = currentPlanMode(ctx);
+    const planMode = await currentPlanMode(ctx);
     if (!planMode?.active || !proposedPlan || !ctx.hasUI) return;
 
-    rememberProposedPlan(ctx, proposedPlan);
+    await rememberProposedPlan(ctx, proposedPlan);
     const choice = await ctx.ui.select("Implement this plan?", [...PLAN_COMPLETION_CHOICES]);
     if (choice === "Yes, implement this plan") {
       await implementApprovedPlan(pi, ctx as ExtensionCommandContext);
       return;
     }
     if (choice === "No, save plan in file") {
-      setPlanMode(ctx, false);
+      await setPlanMode(ctx, false);
       try {
         const path = await saveProposedPlan(ctx.cwd, proposedPlan);
         ctx.ui.notify(`Plan saved to ${relative(ctx.cwd, path)}`, "info");
       } catch (error) {
-        setPlanMode(ctx, true);
+        await setPlanMode(ctx, true);
         ctx.ui.notify(`Failed to save plan: ${error instanceof Error ? error.message : String(error)}`, "error");
       }
       return;
     }
     if (choice === "No, rewrite plan in ralphex mode") {
-      setPlanMode(ctx, false);
+      await setPlanMode(ctx, false);
       activeRalphexPlans.add(id);
       ctx.ui.notify("Leaving Plan mode; rewriting draft in Ralphex mode", "info");
       await sendPrompt(pi, ctx as ExtensionCommandContext, buildRalphexRewritePrompt(proposedPlan));
@@ -417,11 +418,11 @@ export default function (pi: ExtensionAPI) {
     const text = event.text.trim().toLowerCase();
     const implement = /^(implement|implement the plan|приступай|выполняй|делай|давай делай|go|ok|да)[.!\s]*$/i.test(text);
 
-    const store = loadStore();
+    const store = await loadStore();
     const id = threadId(ctx);
     const planMode = store.planModes?.[id];
     if (planMode?.active && implement && planMode.lastProposedPlan) {
-      setPlanMode(ctx, false);
+      await setPlanMode(ctx, false);
       ctx.ui.notify("Leaving Plan mode; implementing last proposed plan", "info");
       return {
         action: "transform",
@@ -433,13 +434,13 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("tool_call", async (event, ctx) => {
-    if (!currentPlanMode(ctx)?.active) return;
+    if (!(await currentPlanMode(ctx))?.active) return;
     if (["write", "edit"].includes(event.toolName)) {
       return { block: true, reason: "Plan Mode forbids mutating file tools; produce a <proposed_plan> instead." };
     }
     if (event.toolName === "bash") {
-      const command = String((event.input as any).command ?? "").toLowerCase();
-      const mutating = /\b(git\s+(commit|push|merge|rebase|reset|checkout|switch|restore|add)|rm\s|mv\s|cp\s|chmod\s|chown\s|mkdir\s|touch\s|npm\s+run\s+format|prettier\s+--write|eslint\b.*--fix|cargo\s+fmt|go\s+fmt|terraform\s+apply|kubectl\s+apply)\b/.test(command);
+      const command = String((event.input as any).command ?? "");
+      const mutating = looksMutating(command);
       if (mutating) return { block: true, reason: "Plan Mode allows only non-mutating exploration; this bash command looks mutating." };
     }
   });
@@ -460,7 +461,7 @@ export default function (pi: ExtensionAPI) {
       ),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      if (!currentPlanMode(ctx)?.active) {
+      if (!(await currentPlanMode(ctx))?.active) {
         return { content: [{ type: "text", text: "request_user_input is intended for Plan Mode." }], isError: true };
       }
       const answers: Array<{ question: string; answer: string }> = [];
@@ -477,7 +478,7 @@ export default function (pi: ExtensionAPI) {
     description: "Enter Codex-style Plan mode, optionally with a task",
     handler: async (args, ctx) => {
       const task = args.trim();
-      setPlanMode(ctx, true, task || undefined);
+      await setPlanMode(ctx, true, task || undefined);
       ctx.ui.notify(task ? "Starting /plan" : "Plan mode enabled", "info");
       if (task) await sendPrompt(pi, ctx, PLAN_PROMPT(task));
     },
@@ -497,7 +498,7 @@ export default function (pi: ExtensionAPI) {
   pi.registerCommand("plan-exit", {
     description: "Leave Codex-style Plan mode",
     handler: async (_args, ctx) => {
-      setPlanMode(ctx, false);
+      await setPlanMode(ctx, false);
       ctx.ui.notify("Plan mode disabled", "info");
     },
   });

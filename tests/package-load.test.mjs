@@ -6,6 +6,9 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { createJiti } from "jiti";
 
+const agentDir = await mkdtemp(join(tmpdir(), "pi-toolkit-test-agent-"));
+process.env.PI_CODING_AGENT_DIR = agentDir;
+test.after(() => rm(agentDir, { recursive: true, force: true }));
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const jiti = createJiti(import.meta.url);
 const extensionFiles = [
