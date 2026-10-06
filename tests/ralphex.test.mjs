@@ -10,6 +10,7 @@ import { createJiti } from "jiti";
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const jiti = createJiti(import.meta.url);
 const planModule = await jiti.import(resolve(root, "extensions/ralphex/plan.ts"));
+const planExtension = await jiti.import(resolve(root, "extensions/plan/index.ts"));
 const modelConfig = await jiti.import(resolve(root, "extensions/ralphex/model-config.ts"));
 const prompts = await jiti.import(resolve(root, "extensions/ralphex/prompts.ts"));
 const ralphex = await jiti.import(resolve(root, "extensions/ralphex/index.ts"));
@@ -196,6 +197,17 @@ test("ralphex model config resolves global, project, and one-run precedence", as
     assert.equal((await stat(paths.global)).mode & 0o777, 0o600);
   } finally {
     await rm(temporary, { recursive: true, force: true });
+  }
+});
+
+test("planning prompts request a task-specific slug without anchoring on a sample", () => {
+  for (const prompt of [
+    prompts.autonomousPlanPrompt("Add a profile screen"),
+    planExtension.buildRalphexPlanPrompt("Add a profile screen"),
+  ]) {
+    assert.match(prompt, /plan-slug/);
+    assert.match(prompt, /current task's meaning/);
+    assert.doesNotMatch(prompt, /<!-- plan-slug: publish-android-app-bundle -->/);
   }
 });
 

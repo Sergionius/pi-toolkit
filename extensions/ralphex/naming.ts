@@ -1,7 +1,6 @@
 // Translation belongs to the planning model, not a character substitution table.
-export const PLAN_NAMING_INSTRUCTIONS = `Include exactly one standalone metadata line near the plan title:
-<!-- plan-slug: publish-android-app-bundle -->
-Choose a concise, meaningful English kebab-case slug (at most 80 characters), translating the task meaning even when the request, title, or source backlog filename is in another language. Never transliterate or copy a transliterated source filename. Keep the title and body in the user's language. This slug names the saved plan and new execution branch.`;
+export const PLAN_NAMING_INSTRUCTIONS = `Include exactly one standalone HTML comment near the plan title with the key plan-slug and a task-specific value.
+Derive a concise, meaningful English kebab-case slug (at most 80 characters) from the current task's meaning, translating it when the request, title, or source backlog filename is in another language. Do not copy example slugs from instructions, repository files, or unrelated plans; never transliterate or copy a transliterated source filename. Keep the title and body in the user's language. This slug names the saved plan and new execution branch.`;
 
 export function explicitPlanSlug(markdown: string): string | undefined {
   const markers = markdown.match(/<!--\s*plan-slug\b[^\n]*-->/g) ?? [];
