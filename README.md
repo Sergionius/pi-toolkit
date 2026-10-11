@@ -125,7 +125,7 @@ In the default mode, the current Pi session implements and tests the task, then 
 
 ## Ralphex plan
 
-`/ralphex-plan` creates an implementation plan through a conversational workflow in the current Pi session:
+`/ralphex-plan` creates an implementation plan through a conversational workflow in the current Pi session. By default it selects the saved `planModel` from `/ralphex-models` (project override for trusted projects, then global); interactive planning switches the current session model and leaves it selected after planning. Use `--default` to keep the current Pi model or `--model provider/model` to select one explicitly for this run. These flags are mutually exclusive. Without a saved model, specify one of these flags or configure `/ralphex-models`:
 
 ```text
 /ralphex-plan add response caching to the API client
@@ -159,7 +159,7 @@ The JSON includes `plan`, `model`, `decisions`, `alternatives`, `reason`, `sideE
 
 ## Autonomous Ralphex planning and execution
 
-Configure separate default models for autonomous planning and execution:
+Configure separate saved models for planning and execution (interactive or autonomous):
 
 ```text
 /ralphex-models
@@ -200,7 +200,10 @@ Execute an accepted plan task by task:
 /ralphex-exec docs/plans/yyyy-MM-dd-feature.md
 /ralphex-exec --auto docs/plans/yyyy-MM-dd-feature.md
 /ralphex-exec --auto --model zai/glm-5.3-flash docs/plans/yyyy-MM-dd-feature.md
+/ralphex-exec --default docs/plans/yyyy-MM-dd-feature.md
 ```
+
+Execution uses the saved `execModel` by default. `--default` uses the current Pi model instead; `--model provider/model` overrides both. The two flags cannot be combined. If no exec model is configured, choose one explicitly or run `/ralphex-models`. The same selection applies to the execution phase of `/ralphex-loop`.
 
 Each Task runs in a fresh Pi process. The worker completes exactly one `### Task N:` section, runs the plan's validation (or the project's cheapest existing compile/analyze/typecheck/build check), marks its checkboxes, and creates one `feat: ...` commit containing code plus the updated plan. One fresh retry is allowed. Existing uncommitted changes other than the plan stop execution. In a repository with no commits, Ralphex first stages all non-ignored files and creates a `chore: initial commit` baseline (empty if there are no stageable files); check `.gitignore` before running. On `main`, `master`, or `trunk`, interactive execution offers to continue directly, cancel, or create/switch to a `feature/<plan-name>` branch; an existing generated branch is reused for resume. `--auto` treats the explicit unattended invocation as approval to create task commits on the current branch. Interactive mode surfaces material questions, while `--auto` resolves safe engineering decisions from project conventions and records them under `## Execution Notes`. Final success and failure reports include total elapsed time; `/ralphex-auto` reports planning and execution together.
 

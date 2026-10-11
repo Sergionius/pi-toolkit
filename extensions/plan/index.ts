@@ -5,7 +5,7 @@ import { Type } from "typebox";
 import { looksMutating } from "../lib/plan-shell";
 import { planSlug, PLAN_NAMING_INSTRUCTIONS } from "../ralphex/naming";
 export { planSlug } from "../ralphex/naming";
-import { createAutonomousPlan, parsePlanCommandArgs, type AutonomousPlanResult } from "../ralphex/index";
+import { createAutonomousPlan, parsePlanCommandArgs, repositoryRoot, resolveRalphexModel, type AutonomousPlanResult } from "../ralphex/index";
 import {
   currentPlanMode,
   extractProposedPlan,
@@ -309,7 +309,7 @@ export async function startAutonomousRalphexPlan(
   pi.events.emit("ralphex:started", { name: "Ralphex plan" });
   try {
     parsed = parsePlanCommandArgs(args);
-    const result = await createPlan(ctx, parsed.request, parsed.model, pi);
+    const result = await createPlan(ctx, parsed.request, parsed.model, pi, parsed.defaultModel);
     const content = parsed.json
       ? JSON.stringify(autonomousPlanPayload(result))
       : formatAutonomousPlanResult(result);
@@ -338,7 +338,8 @@ export async function startRalphexPlan(
   args: string,
   disablePlanMode: typeof setPlanMode = setPlanMode,
 ) {
-  let request = args.trim();
+  const parsed = parsePlanCommandArgs(args);
+  let request = parsed.request;
   if (!request) {
     request = (await ctx.ui.input("Ralphex plan", "What should the implementation plan cover?"))?.trim() ?? "";
     if (!request) {
@@ -347,6 +348,13 @@ export async function startRalphexPlan(
     }
   }
 
+  const root = parsed.model || parsed.defaultModel ? ctx.cwd : await repositoryRoot(ctx.cwd);
+  const selected = await resolveRalphexModel(ctx, root, "plan", parsed.model, parsed.defaultModel);
+  if (`${ctx.model?.provider}/${ctx.model?.id}` !== selected) {
+    const slash = selected.indexOf("/");
+    const candidate = ctx.modelRegistry.find(selected.slice(0, slash), selected.slice(slash + 1));
+    if (!candidate || !(await pi.setModel(candidate))) throw new Error(`Planning model could not be selected: ${selected}`);
+  }
   await disablePlanMode(ctx, false);
   activeRalphexPlans.add(threadId(ctx));
   ctx.ui.notify("Starting /ralphex-plan", "info");
@@ -485,7 +493,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerCommand("ralphex-plan", {
-    description: "Create an implementation plan; add --auto [--model provider/model] [--json] for unattended plan-only mode",
+    description: "Create an implementation plan using the saved plan model; --default uses the current model; supports --model and --auto [--json]",
     handler: async (args, ctx) => {
       if (/(?:^|\s)--auto(?:\s|$)/.test(args)) {
         await startAutonomousRalphexPlan(pi, ctx, args);

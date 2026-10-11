@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { createJiti } from "jiti";
@@ -133,7 +133,54 @@ test("ralphex-plan auto arguments preserve interactive mode and support script f
       model: "openai-codex/gpt-5.6-sol",
     },
   );
+  assert.deepEqual(ralphex.parsePlanCommandArgs("--default add caching"), {
+    auto: false, json: false, request: "add caching", defaultModel: true,
+  });
+  assert.deepEqual(ralphex.parsePlanCommandArgs("--auto --json --default add caching"), {
+    auto: true, json: true, request: "add caching", defaultModel: true,
+  });
+  assert.deepEqual(ralphex.parseCommandArgs("--default feature.md"), {
+    auto: false, requested: "feature.md", defaultModel: true,
+  });
   assert.throws(() => ralphex.parsePlanCommandArgs("--auto --model"), /requires provider\/model/);
+  assert.throws(() => ralphex.parsePlanCommandArgs("--model a\/b --default task"), /either --model or --default/);
+  assert.throws(() => ralphex.parseCommandArgs("--default --model a\/b feature.md"), /either --model or --default/);
+});
+
+test("plan and exec select saved models unless overridden for this run", async () => {
+  const temporary = await mkdtemp(join(tmpdir(), "ralphex-selection-"));
+  const oldAgentDir = process.env.PI_CODING_AGENT_DIR;
+  try {
+    process.env.PI_CODING_AGENT_DIR = join(temporary, "agent");
+    const project = join(temporary, "project");
+    const paths = modelConfig.modelConfigPaths(project);
+    await modelConfig.writeModelConfig(paths.global, { planModel: "test/global-plan", execModel: "test/global-exec" });
+    await modelConfig.writeModelConfig(paths.project, { execModel: "test/project-exec" });
+    const checked = [];
+    const ctx = {
+      isProjectTrusted: () => true,
+      model: { provider: "test", id: "current" },
+      modelRegistry: {
+        find: (provider, id) => { checked.push(`${provider}/${id}`); return { provider, id }; },
+        getProviderAuthStatus: () => ({ configured: true }),
+      },
+    };
+    assert.equal(await ralphex.resolveRalphexModel(ctx, project, "plan"), "test/global-plan");
+    assert.equal(await ralphex.resolveRalphexModel(ctx, project, "exec"), "test/project-exec");
+    assert.equal(await ralphex.resolveRalphexModel(ctx, project, "exec", "test/explicit"), "test/explicit");
+    const before = checked.length;
+    assert.equal(await ralphex.resolveRalphexModel(ctx, project, "plan", undefined, true), "test/current");
+    assert.equal(checked.length, before, "--default must not validate or read saved models");
+    ctx.isProjectTrusted = () => false;
+    assert.equal(await ralphex.resolveRalphexModel(ctx, project, "exec"), "test/global-exec");
+    await rm(paths.global);
+    await assert.rejects(() => ralphex.resolveRalphexModel(ctx, project, "plan"), /run \/ralphex-models or pass --default/);
+    assert.equal(await ralphex.resolveRalphexModel(ctx, project, "plan", undefined, true), "test/current");
+  } finally {
+    if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = oldAgentDir;
+    await rm(temporary, { recursive: true, force: true });
+  }
 });
 
 test("autonomous plan report parses decisions, alternatives, side effects, and assumptions", () => {
@@ -342,6 +389,47 @@ test("ralphex preflight can create and resume a plan branch from main", async ()
     const resumed = await ralphex.ensureExecPreflight(ctx, plan);
     assert.equal(git("branch", "--show-current"), "feature/self-release-pipeline");
     assert.equal(resumed.base, resumedBase, "preflight must reread the plan after switching");
+  } finally {
+    await rm(temporary, { recursive: true, force: true });
+  }
+});
+
+test("ralphex ignores only untracked Xcode SwiftPM lockfiles", async () => {
+  const temporary = await mkdtemp(join(tmpdir(), "ralphex-swiftpm-locks-"));
+  const git = (...args) => execFileSync("git", args, { cwd: temporary, encoding: "utf8" }).trim();
+  const paths = [
+    "ios/Runner.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved",
+    "ios/Runner.xcworkspace/xcshareddata/swiftpm/Package.resolved",
+  ];
+  try {
+    git("init", "-q");
+    git("config", "user.email", "ralphex@example.test");
+    git("config", "user.name", "Ralphex Test");
+    const repository = git("rev-parse", "--show-toplevel");
+    const plan = join(repository, "docs/plans/feature.md");
+    await mkdir(join(repository, "docs/plans"), { recursive: true });
+    await writeFile(plan, sample);
+    git("add", "docs/plans/feature.md");
+    git("commit", "-qm", "initial");
+    const ctx = { cwd: repository, ui: {} };
+    for (const path of paths) {
+      await mkdir(dirname(join(repository, path)), { recursive: true });
+      await writeFile(join(repository, path), "generated");
+    }
+    assert.match(git("status", "--porcelain=v1", "--untracked-files=all"), /\?\? ios\//);
+    await ralphex.ensureExecPreflight(ctx, plan, true);
+
+    const other = "ios/Other.xcworkspace/xcshareddata/swiftpm/Package.resolved";
+    await mkdir(dirname(join(repository, other)), { recursive: true });
+    await writeFile(join(repository, other), "other");
+    await assert.rejects(() => ralphex.ensureExecPreflight(ctx, plan, true), /ios\/Other\.xcworkspace/);
+    await rm(join(repository, other));
+
+    git("add", paths[0]);
+    await assert.rejects(() => ralphex.ensureExecPreflight(ctx, plan, true), /ios\/Runner\.xcodeproj/);
+    git("commit", "-qm", "track lockfile");
+    await writeFile(join(repository, paths[0]), "modified");
+    await assert.rejects(() => ralphex.ensureExecPreflight(ctx, plan, true), /ios\/Runner\.xcodeproj/);
   } finally {
     await rm(temporary, { recursive: true, force: true });
   }

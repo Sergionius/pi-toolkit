@@ -52,6 +52,7 @@ type ParsedCommandArgs = {
   auto: boolean;
   requested: string;
   model?: string;
+  defaultModel?: boolean;
   release?: ReleaseRequest;
 };
 
@@ -66,6 +67,7 @@ type ParsedPlanCommandArgs = {
   json: boolean;
   request: string;
   model?: string;
+  defaultModel?: boolean;
 };
 
 export type AutonomousDecision = {
@@ -119,7 +121,7 @@ async function git(cwd: string, args: string[], allowFailure = false): Promise<s
   return result.stdout.trim();
 }
 
-async function repositoryRoot(cwd: string): Promise<string> {
+export async function repositoryRoot(cwd: string): Promise<string> {
   return git(cwd, ["rev-parse", "--show-toplevel"]);
 }
 
@@ -134,7 +136,15 @@ async function dirtyPaths(cwd: string): Promise<string[]> {
     cwd,
   });
   if (result.code !== 0) throw new Error(`git status failed: ${result.stderr.trim() || result.stdout.trim()}`);
-  return result.stdout.trimEnd().split("\n").filter(Boolean).map((line) => line.slice(3).split(" -> ").pop() ?? "");
+  // Xcode/Flutter generates these SwiftPM lockfiles during iOS builds. Ignore
+  // only untracked copies; tracked edits (including staged ones) still matter.
+  const generatedSwiftPmLocks = new Set([
+    "ios/Runner.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved",
+    "ios/Runner.xcworkspace/xcshareddata/swiftpm/Package.resolved",
+  ]);
+  return result.stdout.trimEnd().split("\n").filter(Boolean)
+    .filter((line) => !(line.startsWith("?? ") && generatedSwiftPmLocks.has(line.slice(3))))
+    .map((line) => line.slice(3).split(" -> ").pop() ?? "");
 }
 
 function normalizeRelative(path: string): string {
@@ -314,14 +324,19 @@ function parseAutoArgs(args: string): ParsedAutoArgs {
 
 function parsePlanCommandArgs(args: string): ParsedPlanCommandArgs {
   const tokens = commandTokens(args);
-  if (!tokens.includes("--auto")) return { auto: false, json: false, request: args.trim() };
+  const auto = tokens.includes("--auto");
   const request: string[] = [];
   let json = false;
   let model: string | undefined;
+  let defaultModel = false;
   for (let index = 0; index < tokens.length; index++) {
     const token = tokens[index];
     if (token === "--auto") continue;
-    if (token === "--json") {
+    if (token === "--default") {
+      defaultModel = true;
+      continue;
+    }
+    if (token === "--json" && auto) {
       json = true;
       continue;
     }
@@ -337,7 +352,8 @@ function parsePlanCommandArgs(args: string): ParsedPlanCommandArgs {
     }
     request.push(token);
   }
-  return { auto: true, json, request: request.join(" ").trim(), model };
+  if (model && defaultModel) throw new Error("choose either --model or --default");
+  return { auto, json, request: request.join(" ").trim(), ...(model ? { model } : {}), ...(defaultModel ? { defaultModel } : {}) };
 }
 
 function parseCommandArgs(args: string): ParsedCommandArgs {
@@ -346,11 +362,16 @@ function parseCommandArgs(args: string): ParsedCommandArgs {
   const ids: string[] = [];
   let auto = false;
   let model: string | undefined;
+  let defaultModel = false;
   let pipeline: string | undefined;
   for (let index = 0; index < tokens.length; index++) {
     const token = tokens[index];
     if (token === "--auto") {
       auto = true;
+      continue;
+    }
+    if (token === "--default") {
+      defaultModel = true;
       continue;
     }
     if (token === "--model") {
@@ -388,10 +409,12 @@ function parseCommandArgs(args: string): ParsedCommandArgs {
     positional.push(token);
   }
   if (ids.length && !pipeline) throw new Error("--id requires --release <pipeline>");
+  if (model && defaultModel) throw new Error("choose either --model or --default");
   return {
     auto,
     requested: positional.join(" ").trim(),
     ...(model ? { model } : {}),
+    ...(defaultModel ? { defaultModel } : {}),
     ...(pipeline ? { release: { pipeline, ids } } : {}),
   };
 }
@@ -400,12 +423,13 @@ async function resolvePlan(
   args: string,
   ctx: ExtensionCommandContext,
   purpose: "exec" | "review" | "loop" = "exec",
-): Promise<{ path: string; auto: boolean; model?: string; release?: ReleaseRequest }> {
+): Promise<{ path: string; auto: boolean; model?: string; defaultModel?: boolean; release?: ReleaseRequest }> {
   const parsed = parseCommandArgs(args);
   if (parsed.requested) return {
     path: await resolveRequestedPlan(ctx.cwd, parsed.requested),
     auto: parsed.auto,
     model: parsed.model,
+    defaultModel: parsed.defaultModel,
     release: parsed.release,
   };
 
@@ -415,11 +439,11 @@ async function resolvePlan(
     : purpose === "review"
       ? "no executed plans awaiting review found in docs/plans/"
       : "no active plans found in docs/plans/");
-  if (plans.length === 1) return { path: plans[0], auto: parsed.auto, model: parsed.model, release: parsed.release };
+  if (plans.length === 1) return { path: plans[0], auto: parsed.auto, model: parsed.model, defaultModel: parsed.defaultModel, release: parsed.release };
   const labels = plans.map((path) => relative(ctx.cwd, path));
   const selected = await ctx.ui.select("Select a Ralphex plan", labels);
   if (!selected) throw new Error("plan selection cancelled");
-  return { path: plans[labels.indexOf(selected)], auto: parsed.auto, model: parsed.model, release: parsed.release };
+  return { path: plans[labels.indexOf(selected)], auto: parsed.auto, model: parsed.model, defaultModel: parsed.defaultModel, release: parsed.release };
 }
 
 export async function askTaskClarification(
@@ -513,6 +537,27 @@ function setRalphexStatus(ctx: ExtensionCommandContext, label: string, detail?: 
   ctx.ui.setStatus("ralphex", formatWorkflowStatus(label, detail, process.stdout.columns ?? 120));
 }
 
+export async function resolveRalphexModel(
+  ctx: ExtensionCommandContext,
+  root: string,
+  phase: "plan" | "exec",
+  override?: string,
+  useCurrent = false,
+): Promise<string> {
+  if (override && useCurrent) throw new Error("choose either --model or --default");
+  const label = phase === "plan" ? "Planning" : "Execution";
+  if (useCurrent) {
+    const current = workerModel(ctx);
+    if (!current) throw new Error(`${label} model is unavailable: no current Pi model`);
+    return current;
+  }
+  const config = override ? undefined : await resolveModelConfig({ root, projectTrusted: ctx.isProjectTrusted() });
+  const model = override ?? (phase === "plan" ? config?.planModel : config?.execModel);
+  if (!model) throw new Error(`${label} model is not configured; run /ralphex-models or pass --default or --model provider/model`);
+  validateConfiguredModel(ctx, model, label);
+  return model;
+}
+
 function validateConfiguredModel(ctx: ExtensionCommandContext, value: string, label: string): void {
   const separator = value.indexOf("/");
   if (separator < 1 || separator === value.length - 1) throw new Error(`${label} model must use provider/model format: ${value}`);
@@ -532,11 +577,11 @@ async function executePlan(
 ): Promise<ExecResult> {
   const resolved = await resolvePlan(rawArgs, ctx);
   if (resolved.release) throw new Error("--release is supported by /ralphex-review and /ralphex-loop, not /ralphex-exec");
-  if (resolved.model) validateConfiguredModel(ctx, resolved.model, "Execution");
+  const root = await repositoryRoot(ctx.cwd);
+  const model = await resolveRalphexModel(ctx, root, "exec", resolved.model, resolved.defaultModel);
   const progressName = options.progressName ?? "Ralphex exec";
-  const model = resolved.model ?? workerModel(ctx);
   setRalphexStatus(ctx, progressName, options.statusDetail ?? `${model ?? "default model"} · ${resolved.auto ? "auto" : "interactive"}`);
-  const { root, base } = await ensureExecPreflight(ctx, resolved.path, resolved.auto);
+  const { base } = await ensureExecPreflight(ctx, resolved.path, resolved.auto);
   const original = await readPlan(resolved.path);
   if (!firstIncompleteTask(original)) throw new Error("plan has no incomplete Task checkboxes");
   await writePlan(resolved.path, ensureBaseCommit(original, base));
@@ -771,17 +816,11 @@ async function generateAutonomousPlan(options: {
   };
 }
 
-export async function createAutonomousPlan(ctx: ExtensionCommandContext, request: string, model?: string, pi?: ExtensionAPI): Promise<AutonomousPlanResult> {
+export async function createAutonomousPlan(ctx: ExtensionCommandContext, request: string, model?: string, pi?: ExtensionAPI, useCurrent = false): Promise<AutonomousPlanResult> {
   if (!request.trim()) throw new Error("task is required: /ralphex-plan --auto <task>");
   const root = await repositoryRoot(ctx.cwd);
-  const config = await resolveModelConfig({
-    root,
-    projectTrusted: ctx.isProjectTrusted(),
-    overrides: model ? { planModel: model } : undefined,
-  });
-  if (!config.planModel) throw new Error("planning model is required; run /ralphex-models first or pass --model");
-  validateConfiguredModel(ctx, config.planModel, "Planning");
-  return generateAutonomousPlan({ pi, ctx, root, request: request.trim(), model: config.planModel, progressName: "Ralphex plan" });
+  const selected = await resolveRalphexModel(ctx, root, "plan", model, useCurrent);
+  return generateAutonomousPlan({ pi, ctx, root, request: request.trim(), model: selected, progressName: "Ralphex plan" });
 }
 
 async function runRalphexAuto(
@@ -1124,21 +1163,21 @@ function formatReleaseSummary(result: ReleaseFinalization | undefined): string {
   return `\n${lines.join("\n")}`;
 }
 
-function loopArgs(auto: boolean, root: string, planPath: string): string {
-  return `${auto ? "--auto " : ""}${relative(root, planPath)}`;
+function loopArgs(auto: boolean, root: string, planPath: string, model?: string, defaultModel?: boolean): string {
+  return `${auto ? "--auto " : ""}${model ? `--model "${model}" ` : defaultModel ? "--default " : ""}${relative(root, planPath)}`;
 }
 
 async function runLoop(pi: ExtensionAPI, ctx: ExtensionCommandContext, rawArgs: string): Promise<void> {
   const resolved = await resolvePlan(rawArgs, ctx, "loop");
   const root = await repositoryRoot(ctx.cwd);
-  const resume = `/ralphex-loop${resolved.auto ? " --auto" : ""} ${basename(resolved.path)}`;
+  const resume = `/ralphex-loop${resolved.auto ? " --auto" : ""}${resolved.model ? ` --model "${resolved.model}"` : resolved.defaultModel ? " --default" : ""} ${basename(resolved.path)}`;
   let phase = "execution";
   let tasksCompleted = 0;
 
   try {
     const initial = await readPlan(resolved.path);
     if (firstIncompleteTask(initial)) {
-      const execResult = await executePlan(pi, ctx, loopArgs(resolved.auto, root, resolved.path), {
+      const execResult = await executePlan(pi, ctx, loopArgs(resolved.auto, root, resolved.path, resolved.model, resolved.defaultModel), {
         announceCompletion: false,
         progressName: "Ralphex loop",
       });
@@ -1405,7 +1444,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerCommand("ralphex-exec", {
-    description: "Execute plan tasks in fresh Pi contexts; supports --auto and --model provider/model",
+    description: "Execute with the saved exec model; --default uses the current model; supports --auto and --model provider/model",
     handler: async (args, ctx) => commandBoundary(
       pi,
       ctx,

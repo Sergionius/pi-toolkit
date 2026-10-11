@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -10,6 +11,7 @@ const agentDir = await mkdtemp(join(tmpdir(), "pi-toolkit-test-agent-"));
 process.env.PI_CODING_AGENT_DIR = agentDir;
 test.after(() => rm(agentDir, { recursive: true, force: true }));
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
+await writeFile(join(agentDir, "ralphex.json"), JSON.stringify({ planModel: "test/planner", execModel: "test/worker" }));
 const jiti = createJiti(import.meta.url);
 const extensionFiles = [
   "extensions/backlog-choice.ts",
@@ -33,6 +35,7 @@ function fakePi() {
   const userMessages = [];
   const customMessages = [];
   const emittedEvents = [];
+  const modelChanges = [];
   return {
     commands,
     commandDefinitions,
@@ -41,6 +44,7 @@ function fakePi() {
     userMessages,
     customMessages,
     emittedEvents,
+    modelChanges,
     api: {
       on(event, handler) { handlers.push({ event, handler }); },
       registerCommand(name, definition) {
@@ -48,6 +52,7 @@ function fakePi() {
         commandDefinitions.set(name, definition);
       },
       registerTool(definition) { tools.push(definition.name); },
+      setModel: async (model) => { modelChanges.push(model); return true; },
       sendUserMessage(message, options) { userMessages.push({ message, options }); },
       sendMessage(message, options) { customMessages.push({ message, options }); },
       exec: async () => ({ stdout: "", stderr: "", code: 0 }),
@@ -63,7 +68,13 @@ function fakeCommandContext(inputAnswer) {
     notifications,
     inputCalls,
     ctx: {
-      cwd: "/tmp/ralphex-plan-test",
+      cwd: root,
+      isProjectTrusted: () => false,
+      model: { provider: "test", id: "current" },
+      modelRegistry: {
+        find: (provider, id) => ({ provider, id }),
+        getProviderAuthStatus: () => ({ configured: true }),
+      },
       sessionManager: { getSessionFile: () => "/tmp/ralphex-plan-test/session.jsonl" },
       waitForIdle: async () => {},
       isIdle: () => true,
@@ -151,17 +162,35 @@ test("ralphex-plan starts an isolated planning workflow from command arguments",
   assert.doesNotMatch(prompt, /every task MUST include.*tests/i);
   assert.doesNotMatch(prompt, /launch.*review.*agent/i);
   assert.deepEqual(notifications, [{ message: "Starting /ralphex-plan", level: "info" }]);
+  assert.deepEqual(pi.modelChanges, [{ provider: "test", id: "planner" }]);
+});
+
+test("interactive ralphex-plan --default keeps the current model", async () => {
+  const pi = fakePi();
+  const imported = await jiti.import(join(root, "extensions", "plan", "index.ts"));
+  const { ctx } = fakeCommandContext();
+  await imported.startRalphexPlan(pi.api, ctx, "--default add caching", async () => {});
+  assert.deepEqual(pi.modelChanges, []);
+  assert.match(pi.userMessages[0].message, /add caching/);
+  assert.doesNotMatch(pi.userMessages[0].message, /--default/);
 });
 
 test("ralphex-plan saves a selected draft directly without another model turn", async () => {
   const temporary = await mkdtemp(join(tmpdir(), "ralphex-plan-direct-save-"));
   try {
+    execFileSync("git", ["init", "-q"], { cwd: temporary });
     const pi = fakePi();
     const imported = await jiti.import(join(root, "extensions", "plan", "index.ts"));
     await imported.default(pi.api);
     const notifications = [];
     const ctx = {
       cwd: temporary,
+      isProjectTrusted: () => false,
+      model: { provider: "test", id: "current" },
+      modelRegistry: {
+        find: (provider, id) => ({ provider, id }),
+        getProviderAuthStatus: () => ({ configured: true }),
+      },
       hasUI: true,
       sessionManager: { getSessionFile: () => join(temporary, "session.jsonl") },
       waitForIdle: async () => {},
@@ -178,6 +207,7 @@ test("ralphex-plan saves a selected draft directly without another model turn", 
     }, ctx);
 
     assert.equal(pi.userMessages.length, 1, "saving must not send an acceptance turn to the model");
+    assert.deepEqual(pi.modelChanges, [{ provider: "test", id: "planner" }]);
     const files = await readdir(join(temporary, "docs", "plans"));
     assert.equal(files.length, 1);
     assert.match(files[0], /^\d{4}-\d{2}-\d{2}-cache-api\.md$/);
@@ -236,6 +266,22 @@ test("ralphex-plan autonomous JSON mode reports saved decisions without executin
   });
   assert.deepEqual(widgetCalls.at(-1), ["ralphex", undefined]);
   assert.deepEqual(pi.emittedEvents.map(({ name }) => name), ["ralphex:started", "ralphex:completed"]);
+});
+
+test("autonomous ralphex-plan --default forwards current-model selection", async () => {
+  const pi = fakePi();
+  const imported = await jiti.import(join(root, "extensions", "plan", "index.ts"));
+  const calls = [];
+  await imported.startAutonomousRalphexPlan(
+    pi.api,
+    { cwd: root, mode: "tui", ui: { setWidget() {} } },
+    "--auto --default plan caching",
+    async (_ctx, request, model, _pi, useCurrent) => {
+      calls.push({ request, model, useCurrent });
+      return { root, planPath: join(root, "docs/plans/feature.md"), model: "test/current", decisions: [], assumptions: [], limitations: [] };
+    },
+  );
+  assert.deepEqual(calls, [{ request: "plan caching", model: undefined, useCurrent: true }]);
 });
 
 test("ralphex-plan autonomous JSON mode returns structured blocked output", async () => {
