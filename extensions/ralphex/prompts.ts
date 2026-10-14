@@ -40,7 +40,7 @@ ${PLAN_NAMING_INSTRUCTIONS}
 ## Acceptance Criteria
 ## Execution Notes
 
-Task numbers must be sequential, every Task must contain at least one unchecked checkbox, and executable checkboxes must appear only in Task sections. The plan must be implementable without further product or architecture choices. Do not include review, release, push, branch, worktree, or deployment steps.
+Task numbers must be sequential, every Task must contain at least one unchecked checkbox, and executable checkboxes must appear only in Task sections. Keep each Task small enough to implement, validate, and commit in one worker context: split large cross-screen conversions by feature/subflow (roughly 4–6 production files or 800 lines per Task), with relevant tests alongside each slice. Do not group all remaining screens into one Task. The plan must be implementable without further product or architecture choices. Do not include review, release, push, branch, worktree, or deployment steps.
 
 Return only:
 <<<RALPHEX:PLAN>>>
@@ -64,7 +64,7 @@ Read the entire plan first, including Goal, Context, Scope, Validation, Acceptan
 
 ## Required workflow
 
-1. Inspect the relevant project files and conventions yourself. Do not launch subagents.
+1. Inspect the relevant project files and conventions yourself. Do not launch subagents. On a retry, inspect git status and the diff first; preserve valid uncommitted work from the previous attempt instead of restarting or restoring it blindly. The previous attempt may have already changed code or the plan.
 2. Complete every unchecked item in Task ${options.task.number}. Immediately before starting each unchecked item, output this progress envelope as a separate assistant message, with its 1-based position among all checkboxes in this Task, the total checkbox count, and the checkbox text:
 <<<RALPHEX:PROGRESS>>>
 {"stage":"checkbox","index":1,"total":3,"text":"concise checkbox text"}
@@ -81,7 +81,7 @@ Then:
    - For a documentation-only task, validate the document against the referenced source; do not run compile, typecheck, test, or build commands unless the plan explicitly requires them for that individual task.
    - Otherwise, if the plan has no usable validation command, identify and run the project's cheapest existing non-destructive compile, analyze, typecheck, or build command.
    - Do not invent test infrastructure or run tests unless the plan explicitly asks for them.
-   - Fix and rerun failures introduced by this task. Do not fix unrelated pre-existing failures.
+   - Fix and rerun failures introduced by this task. For compiler/analyzer errors caused by removing const from scaled widgets, also update their const call sites (including tests); resolve each diagnostic and rerun validation rather than stopping at the first failed command. Do not fix unrelated pre-existing failures.
    - If a validation command fails only because of pre-existing issues outside this task, establish that this task did not add or worsen them by comparing diagnostics with the base commit or otherwise inspecting the affected paths. Record the command and concise non-regression evidence under ## Execution Notes, then treat that command as a non-regression pass.
    - If an applicable validation cannot run because the environment, SDK, credentials, or dependencies are unavailable, or you cannot distinguish its failure from a regression introduced by this task, do not commit and report failure.
 6. Only after applicable validation passes or pre-existing failures are proven unchanged, mark all completed checkboxes in Task ${options.task.number} as [x].
@@ -102,7 +102,7 @@ If the task succeeds, end with this concise machine-readable summary followed by
 <<<RALPHEX:END>>>
 <<<RALPHEX:TASK_DONE>>>
 Use empty arrays when there are no side effects or limitations.
-If it cannot be completed after reasonable attempts, do not commit and end with <<<RALPHEX:TASK_FAILED>>>.
+If it cannot be completed after reasonable attempts to diagnose and repair the specific failure, do not commit and end with <<<RALPHEX:TASK_FAILED>>>. Do not abandon a task merely because the first validation run reports errors. Before failing, state the concrete blocker and what you tried in a separate assistant message (the final signal remains machine-readable).
 ${options.retryContext ? `\n## Previous attempt diagnostics\n${options.retryContext.slice(0, 8000)}` : ""}`;
 }
 

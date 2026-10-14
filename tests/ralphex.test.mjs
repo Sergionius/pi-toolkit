@@ -800,6 +800,8 @@ test("task prompt enforces one task, validation, commit, and mode-specific ambig
   assert.match(interactive, /entire commit message in English only/);
   assert.match(interactive, /regardless of the language used in the plan or user request/);
   assert.match(interactive, /Immediately before starting each unchecked item/);
+  assert.match(interactive, /preserve valid uncommitted work/);
+  assert.match(interactive, /resolve each diagnostic and rerun validation/);
   assert.match(interactive, /"stage":"checkbox"/);
   assert.match(interactive, /Immediately before each validation command/);
   assert.match(interactive, /"stage":"validation"/);
@@ -825,6 +827,7 @@ test("autonomous planning prompt forbids questions and implementation mutations"
   assert.match(prompt, /Do not modify files, Git state/);
   assert.match(prompt, /Decision: <choice>; Alternatives:/);
   assert.match(prompt, /<<<RALPHEX:PLAN>>>/);
+  assert.match(prompt, /split large cross-screen conversions/);
   assert.match(prompt, /review, release, push/);
 });
 

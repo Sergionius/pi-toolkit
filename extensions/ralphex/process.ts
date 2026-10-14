@@ -25,12 +25,33 @@ export function taskFailures(result: ProcessResult, unchecked: number | undefine
   ].filter(Boolean);
 }
 
+function lastFailedToolOutput(stdout: string): string | undefined {
+  let last: string | undefined;
+  const commands = new Map<string, string>();
+  for (const line of stdout.split("\n")) {
+    if (!line.includes('"type":"tool_execution_')) continue;
+    try {
+      const event = JSON.parse(line);
+      if (event.type === "tool_execution_start") {
+        commands.set(String(event.toolCallId), String(event.args?.command ?? ""));
+      } else if (event.type === "tool_execution_end" && event.isError) {
+        const output = (event.result?.content ?? []).filter((part: { type?: string }) => part.type === "text")
+          .map((part: { text?: string }) => part.text ?? "").join("\n");
+        if (output) last = `${commands.get(String(event.toolCallId)) ?? ""}\n${output.slice(-3000)}`.trim();
+      }
+    } catch { /* An incomplete event is not a diagnostic. */ }
+  }
+  return last;
+}
+
 export function workerDiagnostic(result: ProcessResult, failures: string[] = []): string {
+  const toolOutput = lastFailedToolOutput(result.stdout);
   return redactDiagnostic([
     ...failures.map((reason) => `- ${reason}`),
     result.workerError && !failures.includes(`worker error: ${result.workerError}`) && `worker error: ${result.workerError}`,
     `exit code: ${result.code}`,
     result.logPath && `diagnostic log: ${result.logPath}`,
+    toolOutput && `last failed tool output:\n${toolOutput}`,
     result.assistantText ? `assistant: ${result.assistantText.slice(-3000)}` : "empty assistant response",
     result.stderr.slice(-2000),
   ].filter(Boolean).join("\n"));

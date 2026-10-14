@@ -33,6 +33,19 @@ test('empty response reports all unmet completion conditions',async()=>{
     assert.deepEqual(taskFailures(result,undefined,'a','b',[]),['task section missing']);
   } finally {await cleanup(result);}
 });
+test('retry diagnostic includes the failed validation command and output, not just the final marker', async()=>{
+  const result = await worker([
+    {type:'tool_execution_start',toolCallId:'validation',toolName:'bash',args:{command:'flutter analyze'}},
+    {type:'tool_execution_end',toolCallId:'validation',toolName:'bash',isError:true,result:{content:[{type:'text',text:'error: const_with_non_const in scan_entry_test.dart'}]}},
+    message('stop',undefined,'<<<RALPHEX:TASK_FAILED>>>'),
+  ]);
+  try {
+    const diagnostic = workerDiagnostic(result, ['unclosed checkboxes: 3']);
+    assert.match(diagnostic,/flutter analyze/);
+    assert.match(diagnostic,/const_with_non_const/);
+    assert.match(diagnostic,/unclosed checkboxes: 3/);
+  } finally {await cleanup(result);}
+});
 test('both attempts retain private redacted logs',async()=>{
   process.env.RALPHEX_TEST_SECRET='sensitive-value-123';
   const first=await worker([message('error','sensitive-value-123')]);
