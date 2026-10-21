@@ -63,7 +63,7 @@ For example, add both Plan Mode and Ralphex paths to get `/plan`, `/ralphex-plan
 
 This filters **what Pi loads**, not what `pi install` downloads: the whole repository and its dependencies are still installed and updated together. Skills (`ask-claude`, `backlog`, `figma-to-css`) and prompts (`auto`, `duo`) remain loaded unless filtered separately with the package entry's `skills` and `prompts` fields. For example, `"skills": []` and `"prompts": []` disable all toolkit skills and prompts. Ralphex review needs the `ask-claude` skill; `/duo` needs Orca and its skills. Filtering does not change other packages or globally installed skills.
 
-For Flutter auto-refresh, install [VS-Code-Flutter-bridge](https://github.com/Sergionius/VS-Code-Flutter-bridge) as a separate Pi package. See [migration instructions](#migrating-flutter-auto-refresh) if you previously used the bundled bridge.
+Flutter auto-refresh is available as a separate Pi package: [VS-Code-Flutter-bridge](https://github.com/Sergionius/VS-Code-Flutter-bridge).
 
 Check the toolkit installation:
 
@@ -316,18 +316,6 @@ chmod 600 "${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/auth.json"
 
 Restart Pi after recovery. Profile names may contain only letters, digits, `_`, and `-`.
 
-## Migrating Flutter auto-refresh
-
-Flutter auto-refresh, its helper, and the VS Code extension are maintained together in [VS-Code-Flutter-bridge](https://github.com/Sergionius/VS-Code-Flutter-bridge). Update pi-toolkit first so its old Flutter listener is gone, then run `/reload` in Pi **before** installing the new package:
-
-```bash
-pi update git:github.com/Sergionius/pi-toolkit
-# In Pi: /reload
-pi install git:github.com/Sergionius/VS-Code-Flutter-bridge
-```
-
-Run `/reload` again, then `/pi-flutter-bridge-sync` and `Developer: Reload Window` in VS Code. If you configured a direct path to the old `extensions/flutter-refresh.ts`, remove it to avoid duplicate refreshes. `/pi-toolkit-sync-vscode` is replaced with `/pi-flutter-bridge-sync`. The bridge repository documents manual installation, environment variables, and rollback.
-
 ## Development
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, checks, and pull request guidelines; report vulnerabilities as described in [SECURITY.md](SECURITY.md).
@@ -340,23 +328,13 @@ npm audit --omit=dev
 
 Tests load every toolkit extension, check command registration, exercise local commit behavior, and verify the Claude wrapper with a mock CLI. Flutter bridge and handshake tests live in the separate Flutter repository.
 
-## Migration from global files
-
-After the Git package is installed and verified, archive old top-level resources to avoid duplicate command registrations:
-
-```text
-~/.pi/agent/migrated-backup/<timestamp>/
-```
-
-Archive only the extensions and skills that belong to this package. Do not move `auth.json`, sessions, goals, trust, model state, or unrelated binaries.
-
-## Rollback
+## Uninstall
 
 ```bash
 pi remove git:github.com/Sergionius/pi-toolkit
 ```
 
-Restore archived resources to `~/.pi/agent/` and run `/reload`.
+Run `/reload` to unload the package.
 
 ## Security boundaries
 
