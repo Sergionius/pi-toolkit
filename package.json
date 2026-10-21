@@ -1,16 +1,35 @@
 {
   "name": "@sergionius/pi-toolkit",
   "version": "0.4.0",
-  "private": true,
   "description": "Modular Pi extensions, skills, prompts, and setup diagnostics",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Sergionius/pi-toolkit.git"
+  },
+  "homepage": "https://github.com/Sergionius/pi-toolkit#readme",
+  "bugs": {
+    "url": "https://github.com/Sergionius/pi-toolkit/issues"
+  },
   "keywords": [
     "pi-package"
   ],
+  "files": [
+    "extensions/",
+    "skills/",
+    "prompts/",
+    "config/",
+    "CONTRIBUTING.md",
+    "SECURITY.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "scripts": {
     "test": "node --test tests/*.test.mjs && bash tests/ask-claude.test.sh"
   },
-  "dependencies": {
+  "devDependencies": {
     "jiti": "^2.6.1"
   },
   "peerDependencies": {

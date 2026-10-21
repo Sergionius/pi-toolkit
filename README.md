@@ -30,13 +30,14 @@ Flutter auto-refresh is installed separately from [VS-Code-Flutter-bridge](https
 
 ## Install
 
-Install from the public GitHub repository (no npm publication or GitHub SSH access required):
+Install from npm or the public GitHub repository (choose one source, not both):
 
 ```bash
-pi install git:github.com/Sergionius/pi-toolkit
+pi install npm:@sergionius/pi-toolkit
+# or: pi install git:github.com/Sergionius/pi-toolkit
 ```
 
-Pi, Node.js 22.19 or newer, and Git are required. Individual integrations have additional requirements: `FIGMA_TOKEN` for Figma; Claude Code CLI for `ask-claude` and Ralphex review; and CDT with a configured `cdt.yaml` for optional test releases. OpenAI/Codex account commands require an existing Pi OAuth login. Only use a package whose source you trust: installing a Pi package executes its extension code.
+Pi and Node.js 22.19 or newer are required; Git is also required for the GitHub source. Individual integrations have additional requirements: `FIGMA_TOKEN` for Figma; Claude Code CLI for `ask-claude` and Ralphex review; and CDT with a configured `cdt.yaml` for optional test releases. OpenAI/Codex account commands require an existing Pi OAuth login. Only use a package whose source you trust: installing a Pi package executes its extension code.
 
 Reload Pi after installation:
 
@@ -46,7 +47,7 @@ Reload Pi after installation:
 
 ### Load only the extensions you need
 
-The default installation loads all toolkit resources. To load fewer extensions, replace the **existing** pi-toolkit entry in `~/.pi/agent/settings.json` with the object in [`config/package-selection.example.json`](config/package-selection.example.json). Keep your other packages and settings unchanged; do not add a second pi-toolkit entry. If your installed source uses an SSH Git URL, keep that exact `source` value instead of the HTTPS-style one in the example.
+The default installation loads all toolkit resources. To load fewer extensions, replace the **existing** pi-toolkit entry in `~/.pi/agent/settings.json` with the object in [`config/package-selection.example.json`](config/package-selection.example.json). Keep your other packages and settings unchanged; do not add a second pi-toolkit entry. Keep your installed `source` value: replace the example's Git source with `npm:@sergionius/pi-toolkit` for npm installations, or with your SSH Git source if applicable.
 
 The example loads only `/commit`, `/later`, and the `backlog_choice` tool. Add exact paths to its `extensions` list to opt in to other workflows:
 
@@ -331,7 +332,8 @@ Tests load every toolkit extension, check command registration, exercise local c
 ## Uninstall
 
 ```bash
-pi remove git:github.com/Sergionius/pi-toolkit
+pi remove npm:@sergionius/pi-toolkit
+# or, for a Git installation: pi remove git:github.com/Sergionius/pi-toolkit
 ```
 
 Run `/reload` to unload the package.
