@@ -50,6 +50,26 @@ Reload Pi after installation:
 /reload
 ```
 
+### Load only the extensions you need
+
+The default installation loads all toolkit resources. To load fewer extensions, replace the **existing** pi-toolkit entry in `~/.pi/agent/settings.json` with the object in [`config/package-selection.example.json`](config/package-selection.example.json). Keep your other packages and settings unchanged; do not add a second pi-toolkit entry. If your installed source uses an SSH Git URL, keep that exact `source` value instead of the HTTPS-style one in the example.
+
+The example loads only `/commit`, `/later`, and the `backlog_choice` tool. Add exact paths to its `extensions` list to opt in to other workflows:
+
+| Workflow | Add these paths |
+| --- | --- |
+| Plan Mode and Ralphex | `+extensions/plan/index.ts`, `+extensions/ralphex/index.ts` |
+| Figma | `+extensions/figma-context.ts` |
+| Flutter auto-refresh | `+extensions/flutter-refresh.ts` |
+| Codex accounts | `+extensions/codex-accounts.ts` |
+| Codex usage | `+extensions/codex-status.ts` |
+| Orca Ralphex status | `+extensions/orca-ralphex-status.ts` (use with Plan Mode/Ralphex) |
+| Doctor and VS Code bridge sync | `+extensions/toolkit.ts` |
+
+For example, add both Plan Mode and Ralphex paths to get `/plan`, `/ralphex-plan`, `/ralphex-exec`, and the other planning commands. `pi config` provides an interactive alternative for enabling individual resources. Run `/reload` after changing settings and check that only the chosen commands are available.
+
+This filters **what Pi loads**, not what `pi install` downloads: the whole repository and its dependencies are still installed and updated together. Skills (`ask-claude`, `backlog`, `figma-to-css`) and prompts (`auto`, `duo`) remain loaded unless filtered separately with the package entry's `skills` and `prompts` fields. For example, `"skills": []` and `"prompts": []` disable all toolkit skills and prompts. Ralphex review needs the `ask-claude` skill; `/duo` needs Orca and its skills. Filtering does not change other packages or globally installed skills.
+
 Install or update the bundled VS Code bridge:
 
 ```text

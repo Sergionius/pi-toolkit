@@ -1,0 +1,12 @@
+{
+  "packages": [
+    {
+      "source": "git:github.com/Sergionius/pi-toolkit",
+      "extensions": [
+        "+extensions/commit.ts",
+        "+extensions/later.ts",
+        "+extensions/backlog-choice.ts"
+      ]
+    }
+  ]
+}
