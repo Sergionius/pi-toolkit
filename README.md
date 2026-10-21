@@ -30,7 +30,7 @@ Flutter auto-refresh is installed separately from [VS-Code-Flutter-bridge](https
 
 ## Install
 
-Install from GitHub (repository access is required while this repository is private; once public, GitHub SSH access is not required):
+Install from the public GitHub repository (no npm publication or GitHub SSH access required):
 
 ```bash
 pi install git:github.com/Sergionius/pi-toolkit
