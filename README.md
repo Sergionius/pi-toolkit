@@ -1,6 +1,6 @@
 # pi-toolkit
 
-[Pi](https://pi.dev) package containing reusable extensions, prompt templates, and skills. The optional Flutter integration lives in [VS-Code-Flutter-bridge](https://github.com/Sergionius/VS-Code-Flutter-bridge).
+[Pi](https://pi.dev) package containing reusable extensions, prompt templates, and skills. The optional Flutter integration lives in [Flutter Agent Refresh](https://github.com/Sergionius/flutter-agent-refresh).
 
 ## Included
 
@@ -26,7 +26,7 @@
 - `ask-claude` — read-only second opinion from Claude Code for debugging, investigation, architecture, and adversarial review.
 - `backlog` — Git-backed deferred-work list in each project's `docs/backlog/`; adapted from [cc-thingz](https://github.com/umputun/cc-thingz) (MIT).
 
-Flutter auto-refresh is installed separately from [VS-Code-Flutter-bridge](https://github.com/Sergionius/VS-Code-Flutter-bridge). Tax push/reply is installed separately from [`Sergionius/tax`](https://github.com/Sergionius/tax).
+Flutter auto-refresh is installed separately from [Flutter Agent Refresh](https://github.com/Sergionius/flutter-agent-refresh). Tax push/reply is installed separately from [`Sergionius/tax`](https://github.com/Sergionius/tax).
 
 ## Install
 
@@ -64,7 +64,7 @@ For example, add both Plan Mode and Ralphex paths to get `/plan`, `/ralphex-plan
 
 This filters **what Pi loads**, not what `pi install` downloads: the whole repository and its dependencies are still installed and updated together. Skills (`ask-claude`, `backlog`, `figma-to-css`) and prompts (`auto`, `duo`) remain loaded unless filtered separately with the package entry's `skills` and `prompts` fields. For example, `"skills": []` and `"prompts": []` disable all toolkit skills and prompts. Ralphex review needs the `ask-claude` skill; `/duo` needs Orca and its skills. Filtering does not change other packages or globally installed skills.
 
-Flutter auto-refresh is available as a separate Pi package: [VS-Code-Flutter-bridge](https://github.com/Sergionius/VS-Code-Flutter-bridge).
+Flutter auto-refresh is available as a separate Pi package: [Flutter Agent Refresh](https://github.com/Sergionius/flutter-agent-refresh).
 
 Check the toolkit installation:
 
@@ -90,7 +90,7 @@ After installing this package and running `/reload`, use `/skill:backlog` to ins
 pi update --extensions
 ```
 
-Run `/reload` after updating the toolkit. Update the Flutter bridge separately with `pi update git:github.com/Sergionius/VS-Code-Flutter-bridge`.
+Run `/reload` after updating the toolkit. Update the Flutter bridge separately with `pi update git:github.com/Sergionius/flutter-agent-refresh`.
 
 ## Environment
 
