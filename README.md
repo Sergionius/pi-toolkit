@@ -36,7 +36,7 @@ The optional Tax push/reply extension is maintained separately in the public [`S
 
 ## Install
 
-Install from the public GitHub repository (no npm publication or GitHub SSH access required):
+Install from GitHub (repository access is required while this repository is private; once public, GitHub SSH access is not required):
 
 ```bash
 pi install git:github.com/Sergionius/pi-toolkit
@@ -357,6 +357,8 @@ Manual test from a Flutter project root:
 ```
 
 ## Development
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, checks, and pull request guidelines; report vulnerabilities as described in [SECURITY.md](SECURITY.md).
 
 ```bash
 npm ci
