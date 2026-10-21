@@ -1,6 +1,6 @@
 # pi-toolkit
 
-[Pi](https://pi.dev) package containing reusable extensions, prompt templates, skills, and the VS Code bridge used by the Flutter auto-refresh workflow.
+[Pi](https://pi.dev) package containing reusable extensions, prompt templates, and skills. The optional Flutter integration lives in [VS-Code-Flutter-bridge](https://github.com/Sergionius/VS-Code-Flutter-bridge).
 
 ## Included
 
@@ -12,9 +12,8 @@
 - `codex-accounts.ts` — local multi-account manager for OpenAI/Codex OAuth profiles.
 - `commit.ts` — global `/commit` command: stages all changes and creates a local commit using the model configured by `PI_COMMIT_MODEL`, without pushing. Untracked files that will be included are listed in a warning before staging.
 - `figma-context.ts` — `figma_get_screen_context` tool. Caches exports in the private toolkit directory (`~/.pi/agent/cache/figma/`, or `PI_CODING_AGENT_DIR`), never in the working repository; the last good generation stays readable if a refresh fails.
-- `flutter-refresh.ts` — automatic Flutter refresh after successful edits: model changes, added class fields/constructor parameters, and Dart file rewrites trigger hot restart; ordinary UI edits use hot reload.
 - `later.ts` — `/later <delay> <command or message>` schedules loaded extension/skill/prompt commands or plain messages (`/later 30m /ralphex-exec plan.md`, `/later 1h30m check the build`). Delays use `h`/`m`/`s`, up to 24h. Waits for the agent to be idle; overdue tasks remain cancellable with `/later cancel <id|all>` and visible in `/later list`. `/compact [instructions]` is supported explicitly; other built-in and unknown commands are rejected. Countdown updates every second. In-memory only: switching/forking sessions, shutdown, or `/reload` clears tasks.
-- `toolkit.ts` — toolkit diagnostics and VS Code bridge synchronization.
+- `toolkit.ts` — toolkit integration diagnostics.
 
 ### Prompt templates
 
@@ -27,12 +26,7 @@
 - `ask-claude` — read-only second opinion from Claude Code for debugging, investigation, architecture, and adversarial review.
 - `backlog` — Git-backed deferred-work list in each project's `docs/backlog/`; adapted from [cc-thingz](https://github.com/umputun/cc-thingz) (MIT).
 
-### Bundled integrations
-
-- `scripts/flutter_refresh.sh` — confirmed request/response handshake with VS Code.
-- `vscode/bundled-flutter-refresh-bridge/` — bundled Dart-Code reload/restart bridge snapshot. The independently maintained `vscode/pi-flutter-refresh-bridge/` checkout is ignored by this repository.
-
-The optional Tax push/reply extension is maintained separately in the public [`Sergionius/tax`](https://github.com/Sergionius/tax) package.
+Flutter auto-refresh is installed separately from [VS-Code-Flutter-bridge](https://github.com/Sergionius/VS-Code-Flutter-bridge). Tax push/reply is installed separately from [`Sergionius/tax`](https://github.com/Sergionius/tax).
 
 ## Install
 
@@ -42,7 +36,7 @@ Install from GitHub (repository access is required while this repository is priv
 pi install git:github.com/Sergionius/pi-toolkit
 ```
 
-Pi, Node.js 22.19 or newer, and Git are required. Individual integrations have additional requirements: VS Code with Dart-Code and a running Flutter debug session for auto-refresh; `FIGMA_TOKEN` for Figma; Claude Code CLI for `ask-claude` and Ralphex review; and CDT with a configured `cdt.yaml` for optional test releases. OpenAI/Codex account commands require an existing Pi OAuth login. Only use a package whose source you trust: installing a Pi package executes its extension code.
+Pi, Node.js 22.19 or newer, and Git are required. Individual integrations have additional requirements: `FIGMA_TOKEN` for Figma; Claude Code CLI for `ask-claude` and Ralphex review; and CDT with a configured `cdt.yaml` for optional test releases. OpenAI/Codex account commands require an existing Pi OAuth login. Only use a package whose source you trust: installing a Pi package executes its extension code.
 
 Reload Pi after installation:
 
@@ -60,25 +54,18 @@ The example loads only `/commit`, `/later`, and the `backlog_choice` tool. Add e
 | --- | --- |
 | Plan Mode and Ralphex | `+extensions/plan/index.ts`, `+extensions/ralphex/index.ts` |
 | Figma | `+extensions/figma-context.ts` |
-| Flutter auto-refresh | `+extensions/flutter-refresh.ts` |
 | Codex accounts | `+extensions/codex-accounts.ts` |
 | Codex usage | `+extensions/codex-status.ts` |
 | Orca Ralphex status | `+extensions/orca-ralphex-status.ts` (use with Plan Mode/Ralphex) |
-| Doctor and VS Code bridge sync | `+extensions/toolkit.ts` |
+| Toolkit doctor | `+extensions/toolkit.ts` |
 
 For example, add both Plan Mode and Ralphex paths to get `/plan`, `/ralphex-plan`, `/ralphex-exec`, and the other planning commands. `pi config` provides an interactive alternative for enabling individual resources. Run `/reload` after changing settings and check that only the chosen commands are available.
 
 This filters **what Pi loads**, not what `pi install` downloads: the whole repository and its dependencies are still installed and updated together. Skills (`ask-claude`, `backlog`, `figma-to-css`) and prompts (`auto`, `duo`) remain loaded unless filtered separately with the package entry's `skills` and `prompts` fields. For example, `"skills": []` and `"prompts": []` disable all toolkit skills and prompts. Ralphex review needs the `ask-claude` skill; `/duo` needs Orca and its skills. Filtering does not change other packages or globally installed skills.
 
-Install or update the bundled VS Code bridge:
+For Flutter auto-refresh, install [VS-Code-Flutter-bridge](https://github.com/Sergionius/VS-Code-Flutter-bridge) as a separate Pi package. See [migration instructions](#migrating-flutter-auto-refresh) if you previously used the bundled bridge.
 
-```text
-/pi-toolkit-sync-vscode
-```
-
-Then run `Developer: Reload Window` in VS Code.
-
-Check the installation:
+Check the toolkit installation:
 
 ```text
 /pi-toolkit-doctor
@@ -102,7 +89,7 @@ After installing this package and running `/reload`, use `/skill:backlog` to ins
 pi update --extensions
 ```
 
-After an update that changes the bundled VS Code bridge, run `/reload`, `/pi-toolkit-sync-vscode`, and `Developer: Reload Window` again. Updating the separate bridge repository does not automatically update this package's bundled snapshot.
+Run `/reload` after updating the toolkit. Update the Flutter bridge separately with `pi update git:github.com/Sergionius/VS-Code-Flutter-bridge`.
 
 ## Environment
 
@@ -110,10 +97,6 @@ Features are enabled by environment variables; values are never stored in this r
 
 - `FIGMA_TOKEN` — Figma API access.
 - `PI_COMMIT_MODEL` — required model for `/commit`, for example `zai/glm-5.3-flash`.
-- `TAX_API_KEY` and `TAX_SERVER` — consumed by the separate Tax package.
-- `PI_FLUTTER_REFRESH_DISABLED=1` — disables automatic Flutter refresh.
-- `PI_FLUTTER_REFRESH_TIMEOUT_SECONDS` — bridge response timeout, default `10`.
-- `PI_TOOLKIT_VSCODE_EXTENSIONS_DIR` — optional VS Code extension directory override, primarily for tests.
 - `ASK_CLAUDE_MODEL` — model used by the `ask-claude` skill, default `opus`.
 - `ASK_CLAUDE_EFFORT` — Claude reasoning effort, default `high`.
 
@@ -136,9 +119,9 @@ Invoking `/auto` without a task makes no changes and reports the missing task in
 Use the installed package's `/duo` prompt in any Pi project with Orca and a configured Claude agent:
 
 ```text
-/duo исправь ошибку входа
-/duo parallel предложи способы ускорить загрузку списка
-/duo discuss предложи способы ускорить загрузку списка
+/duo fix the login error
+/duo parallel investigate ways to speed up list loading
+/duo discuss investigate ways to speed up list loading
 ```
 
 In the default mode, the current Pi session implements and tests the task, then delegates read-only code review to Claude through Orca orchestration. Pi assesses and fixes verified findings and reruns relevant checks. In `parallel` mode, Pi and Claude independently investigate without editing files; Pi compares their evidence and proposes a solution without implementing it. In `discuss` mode, the same independent investigation is followed by up to two read-only rounds of exchanging arguments through Orca; Pi reports the conclusion and any unresolved disagreement without implementing it. The prompt loads Orca's existing `orchestration` skill and version-matched CLI guide rather than maintaining its own command reference. Missing Orca or Claude is reported as a blocker, not silently replaced with another integration. Run `/reload` after updating the package to discover the command.
@@ -195,13 +178,13 @@ The command selects global or current-project scope and then chooses both models
 Create a plan and execute it immediately without questions, manual acceptance, Claude review, release, or push:
 
 ```text
-/ralphex-auto добавь сепараторы на странице localhost:3000/claims/list
+/ralphex-auto add row separators to localhost:3000/claims/list
 ```
 
 One-run model overrides take precedence over project and global settings:
 
 ```text
-/ralphex-auto --plan-model openai-codex/gpt-5.6-sol --exec-model zai/glm-5.3-flash добавь сепараторы
+/ralphex-auto --plan-model openai-codex/gpt-5.6-sol --exec-model zai/glm-5.3-flash add row separators
 ```
 
 The planning worker inspects the repository, chooses safe minimal reversible answers to ordinary ambiguity, records decisions, alternatives, rationale, and side effects under `## Execution Notes`, and saves a validated plan in `docs/plans/`. The existing task-by-task exec workflow then runs with the execution model. Missing or unauthenticated models stop before planning and never fall back silently. The final report lists the models, implementation, validation, autonomous decisions, side effects, assumptions, and limitations. The checked plan remains in `docs/plans/` because review and completed-plan movement are intentionally skipped.
@@ -333,28 +316,17 @@ chmod 600 "${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/auth.json"
 
 Restart Pi after recovery. Profile names may contain only letters, digits, `_`, and `-`.
 
-## Flutter refresh
+## Migrating Flutter auto-refresh
 
-The workflow is:
-
-```text
-Pi edit/write
-→ agent_settled
-→ scripts/flutter_refresh.sh
-→ atomic request with ID
-→ VS Code checks the active Dart session/workspace
-→ Dart-Code reload/restart
-→ atomic response
-→ confirmed Pi result
-```
-
-The Flutter application must be running through the same VS Code workspace. Use `Pi Flutter Bridge: Diagnose` in the VS Code Command Palette if the bridge reports a timeout or missing debug session.
-
-Manual test from a Flutter project root:
+Flutter auto-refresh, its helper, and the VS Code extension are maintained together in [VS-Code-Flutter-bridge](https://github.com/Sergionius/VS-Code-Flutter-bridge). Update pi-toolkit first so its old Flutter listener is gone, then run `/reload` in Pi **before** installing the new package:
 
 ```bash
-/path/to/pi-toolkit/scripts/flutter_refresh.sh reload
+pi update git:github.com/Sergionius/pi-toolkit
+# In Pi: /reload
+pi install git:github.com/Sergionius/VS-Code-Flutter-bridge
 ```
+
+Run `/reload` again, then `/pi-flutter-bridge-sync` and `Developer: Reload Window` in VS Code. If you configured a direct path to the old `extensions/flutter-refresh.ts`, remove it to avoid duplicate refreshes. `/pi-toolkit-sync-vscode` is replaced with `/pi-flutter-bridge-sync`. The bridge repository documents manual installation, environment variables, and rollback.
 
 ## Development
 
@@ -366,7 +338,7 @@ npm test
 npm audit --omit=dev
 ```
 
-Tests load every extension, check command registration, exercise local commit behavior, exercise the Flutter handshake, verify the Claude wrapper with a mock CLI, and verify idempotent VS Code bridge synchronization in temporary directories.
+Tests load every toolkit extension, check command registration, exercise local commit behavior, and verify the Claude wrapper with a mock CLI. Flutter bridge and handshake tests live in the separate Flutter repository.
 
 ## Migration from global files
 
@@ -376,7 +348,7 @@ After the Git package is installed and verified, archive old top-level resources
 ~/.pi/agent/migrated-backup/<timestamp>/
 ```
 
-Archive only the extensions, skill, and `flutter_refresh.sh` that now belong to this package. Do not move `auth.json`, sessions, goals, trust, model state, or unrelated binaries.
+Archive only the extensions and skills that belong to this package. Do not move `auth.json`, sessions, goals, trust, model state, or unrelated binaries.
 
 ## Rollback
 
@@ -384,7 +356,7 @@ Archive only the extensions, skill, and `flutter_refresh.sh` that now belong to 
 pi remove git:github.com/Sergionius/pi-toolkit
 ```
 
-Restore archived resources to `~/.pi/agent/`, run `/reload`, and restore the previous VS Code bridge directory if required.
+Restore archived resources to `~/.pi/agent/` and run `/reload`.
 
 ## Security boundaries
 
@@ -393,6 +365,5 @@ Never commit:
 - `auth.json`, `codex-accounts.json`, account-switch backups, or provider tokens;
 - Pi sessions, goals, trust decisions, or model state;
 - `.env` files;
-- Tax queues/logs;
 - generated Figma cache;
 - machine-specific backup files.

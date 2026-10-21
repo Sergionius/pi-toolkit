@@ -18,7 +18,7 @@ Node.js 22.19 or newer is required. Some integration tests use Bash and Python 3
 - Include tests for changed behavior and update the README when commands, setup, or dependencies change.
 - Keep tests isolated from real Pi credentials and sessions. Use temporary directories and fake tokens; never commit `auth.json`, API keys, account backups, production logs, or real application artifacts.
 - Respect the difference between safe local checks and actions with side effects: do not make tests push, release, or use real provider credentials.
-- Keep the bundled VS Code bridge snapshot in `vscode/bundled-flutter-refresh-bridge/` in sync with changes to its independent source repository.
+- Keep Flutter refresh changes in the separate [VS-Code-Flutter-bridge](https://github.com/Sergionius/VS-Code-Flutter-bridge) repository.
 
 ## Pull requests
 

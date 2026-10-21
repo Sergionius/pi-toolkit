@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
@@ -19,7 +19,6 @@ const extensionFiles = [
   "extensions/codex-status.ts",
   "extensions/commit.ts",
   "extensions/figma-context.ts",
-  "extensions/flutter-refresh.ts",
   "extensions/later.ts",
   "extensions/orca-ralphex-status.ts",
   "extensions/plan/index.ts",
@@ -326,30 +325,4 @@ test("ralphex-plan cancellation leaves Plan Mode untouched and sends no prompt",
   assert.deepEqual(modeChanges, []);
   assert.equal(pi.userMessages.length, 0);
   assert.deepEqual(notifications, [{ message: "Ralphex plan creation cancelled", level: "warning" }]);
-});
-
-test("VS Code bridge sync is verified, idempotent, and removes the legacy install", async () => {
-  const temporary = await mkdtemp(join(tmpdir(), "pi-toolkit-vscode-"));
-  try {
-    const legacy = join(temporary, "local.pi-flutter-refresh-bridge-0.1.0");
-    await mkdir(legacy, { recursive: true });
-    await writeFile(join(legacy, "legacy.txt"), "legacy", "utf8");
-    const previous = join(temporary, "local.pi-flutter-refresh-bridge-0.2.0");
-    await mkdir(previous, { recursive: true });
-
-    const imported = await jiti.import(join(root, "extensions", "toolkit.ts"));
-    const first = await imported.syncVsCodeBridge({ extensionsDir: temporary });
-    const second = await imported.syncVsCodeBridge({ extensionsDir: temporary });
-
-    assert.equal(first.destination, second.destination);
-    assert.equal(first.version, "0.2.1");
-    assert.equal(first.removedLegacy.length, 2);
-    assert.equal(second.removedLegacy.length, 0);
-
-    const manifest = JSON.parse(await readFile(join(second.destination, "package.json"), "utf8"));
-    assert.equal(manifest.version, "0.2.1");
-    assert.equal(manifest.publisher, "local");
-  } finally {
-    await rm(temporary, { recursive: true, force: true });
-  }
 });

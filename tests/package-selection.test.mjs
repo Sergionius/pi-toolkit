@@ -62,7 +62,6 @@ test("selection example names real entry points exposed by the package manifest"
     "extensions/codex-status.ts",
     "extensions/commit.ts",
     "extensions/figma-context.ts",
-    "extensions/flutter-refresh.ts",
     "extensions/later.ts",
     "extensions/orca-ralphex-status.ts",
     "extensions/plan/index.ts",
@@ -77,6 +76,11 @@ test("base selection registers only the base commands and backlog tool", async (
   const { commands, tools } = await registrations(selected);
   assert.deepEqual(commands.sort(), ["commit", "later"]);
   assert.deepEqual(tools, ["backlog_choice"]);
+});
+
+test("public README stays English-only", async () => {
+  const readme = await readFile(join(root, "README.md"), "utf8");
+  assert.doesNotMatch(readme, /[А-Яа-яЁё]/);
 });
 
 test("planning selection adds planning commands without other integrations", async () => {

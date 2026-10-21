@@ -7,7 +7,6 @@
     "~/.codex/skills"
   ],
   "packages": [
-    "git:github.com/Sergionius/pi-toolkit",
-    "git:github.com/Sergionius/tax"
+    "git:github.com/Sergionius/pi-toolkit"
   ]
 }

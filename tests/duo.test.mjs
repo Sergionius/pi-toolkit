@@ -40,6 +40,6 @@ test("duo discuss exchanges arguments after independent research without editing
   assert.match(prompt, /не отправляй сообщение завершённому воркеру/);
   assert.match(prompt, /неразрешённые расхождения/);
   assert.match(prompt, /Никаких правок кода, планов или других файлов/);
-  assert.match(readme, /\/duo discuss предложи способы ускорить загрузку списка/);
+  assert.match(readme, /\/duo discuss investigate ways to speed up list loading/);
   assert.match(readme, /up to two read-only rounds of exchanging arguments through Orca/);
 });
