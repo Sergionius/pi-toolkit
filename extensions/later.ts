@@ -164,9 +164,16 @@ export class LaterScheduler {
   }
 }
 
+export function commandName(payload: string): string | null {
+  if (!payload.startsWith("/")) return null;
+  const name = payload.slice(1).split(/\s/, 1)[0];
+  // Command names never contain an inner "/"; a token like "Users/me/report.txt" is a file path.
+  return name.includes("/") ? null : name;
+}
+
 export function sendLaterPayload(pi: ExtensionAPI, payload: string): void {
   const options: { deliverAs: "followUp"; expandPromptTemplates?: boolean } = { deliverAs: "followUp" };
-  if (payload.startsWith("/")) options.expandPromptTemplates = true;
+  if (commandName(payload) !== null) options.expandPromptTemplates = true;
   pi.sendUserMessage(payload, options);
 }
 
@@ -202,9 +209,8 @@ export default function (pi: ExtensionAPI) {
   };
 
   const supported = (payload: string) => {
-    if (!payload.startsWith("/")) return true;
-    const name = payload.slice(1).split(/\s/, 1)[0];
-    return name === "compact" || pi.getCommands().some((command) => command.name === name);
+    const name = commandName(payload);
+    return name === null || name === "compact" || pi.getCommands().some((command) => command.name === name);
   };
 
   const scheduler = new LaterScheduler((task) => {

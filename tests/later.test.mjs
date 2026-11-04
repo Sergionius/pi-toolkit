@@ -236,6 +236,34 @@ test("later command supports list and cancel, and session changes cancel pending
   assert.equal(pi.notifications.at(-1).message, "No pending /later tasks.", "shutdown clears the queue");
 });
 
+test("commandName distinguishes commands from file paths", () => {
+  assert.equal(later.commandName("/ralphex-exec plan.md"), "ralphex-exec");
+  assert.equal(later.commandName("/compact old messages"), "compact");
+  assert.equal(later.commandName("/Users/me/report.txt summarize"), null, "a path token is not a command");
+  assert.equal(later.commandName("plain message"), null);
+});
+
+test("path-like payloads schedule as plain text while unknown commands stay rejected", async () => {
+  const pi = fakePi();
+  await later.default(pi.api);
+  const handler = pi.commands.get("later").handler;
+
+  await handler("1s /Users/me/report.txt summarize the failures", pi.ctx);
+  assert.ok(!pi.notifications.some(({ message }) => message.includes("Unsupported command")), "paths are allowed");
+
+  await handler("1s /compcat plan.md", pi.ctx);
+  assert.match(pi.notifications.at(-1).message, /^Unsupported command/, "typo'd short commands still rejected");
+  assert.match(pi.statusSets.at(-1).text, /1 pending/, "only the path task is queued");
+
+  await sleep(1_200);
+  assert.equal(pi.userMessages.length, 1);
+  assert.deepEqual(pi.userMessages[0], {
+    message: "/Users/me/report.txt summarize the failures",
+    options: { deliverAs: "followUp" },
+  }, "path payloads dispatch as plain text without template expansion");
+  assert.equal(pi.statusSets.at(-1).text, undefined, "status clears after dispatch");
+});
+
 test("later command schedules an absolute HH:MM task and reports the at-label", async () => {
   const pi = fakePi();
   await later.default(pi.api);
