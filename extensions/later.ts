@@ -3,10 +3,11 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-c
 const UNIT_MS: Record<string, number> = { h: 3_600_000, m: 60_000, s: 1_000 };
 const MAX_DELAY_MS = 24 * UNIT_MS.h;
 const DELAY_PATTERN = /^(?:\d+[hms])+$/;
+const TIME_PATTERN = /^(\d{1,2}):(\d{2})$/;
 const PAYLOAD_PREVIEW_LIMIT = 80;
 
 const USAGE =
-  "Usage: /later <delay> <command or message> (e.g. /later 30m /ralphex-exec plan.md) | /later list | /later cancel <id|all>";
+  "Usage: /later <delay|HH:MM> <command or message> (e.g. /later 30m /ralphex-exec plan.md | /later at 15:01 check the build) | /later list | /later cancel <id|all>";
 
 type MinimalUi = {
   notify: (message: string, type?: "info" | "warning" | "error") => void;
@@ -16,9 +17,10 @@ type MinimalUi = {
 export type LaterTask = { id: number; payload: string; fireAt: number };
 
 export type LaterPlan =
-  | { action: "schedule"; delayMs: number; payload: string }
+  | { action: "schedule"; delayMs: number; payload: string; atLabel?: string }
   | { action: "list" }
   | { action: "cancel"; target: string }
+  | { action: "error"; reason: string }
   | { action: "usage"; reason?: string };
 
 export function parseDelayMs(raw: string): number | null {
@@ -32,7 +34,7 @@ export function parseDelayMs(raw: string): number | null {
   return ms;
 }
 
-export function parseLaterArgs(raw: string): LaterPlan {
+export function parseLaterArgs(raw: string, now: number = Date.now()): LaterPlan {
   const args = raw.trim();
   if (!args) return { action: "usage" };
   if (args === "list") return { action: "list" };
@@ -43,15 +45,39 @@ export function parseLaterArgs(raw: string): LaterPlan {
     return { action: "cancel", target: cancelMatch[1] };
   }
 
+  // `at HH:MM` / `в HH:MM` alias the bare absolute form; a non-time token after the
+  // prefix falls through to the ordinary relative parsing below.
+  const prefixed = /^(at|в)\s+(\S+)(?:\s+([\s\S]+))?$/.exec(args);
+  if (prefixed && TIME_PATTERN.test(prefixed[2])) {
+    return parseAbsolutePlan(prefixed[2], prefixed[3] ?? "", now);
+  }
+
   const match = /^(\S+)(?:\s+([\s\S]+))?$/.exec(args);
   if (!match) return { action: "usage" };
+  if (TIME_PATTERN.test(match[1])) return parseAbsolutePlan(match[1], match[2] ?? "", now);
   const delayMs = parseDelayMs(match[1]);
   if (delayMs === null) {
-    return { action: "usage", reason: `Invalid delay "${match[1]}". Use a combination of h, m, s like 90s, 45m, or 1h30m (max 24h).` };
+    return { action: "usage", reason: `Invalid delay "${match[1]}". Use h/m/s like 90s, 45m, or 1h30m, or a local time like 15:01 (max 24h).` };
   }
   const payload = (match[2] ?? "").trim();
   if (!payload) return { action: "usage", reason: "Add the command or message to run after the delay." };
   return { action: "schedule", delayMs, payload };
+}
+
+function parseAbsolutePlan(token: string, rawPayload: string, now: number): LaterPlan {
+  const [hours, minutes] = token.split(":").map(Number);
+  if (hours > 23 || minutes > 59) {
+    return { action: "error", reason: `"${token}" is not a valid local time (HH:MM).` };
+  }
+  const payload = rawPayload.trim();
+  if (!payload) return { action: "usage", reason: "Add the command or message to run after the delay." };
+  const target = new Date(now);
+  target.setHours(hours, minutes, 0, 0);
+  const delayMs = target.getTime() - now;
+  if (delayMs <= 0) {
+    return { action: "error", reason: `"${token}" has already passed today. Use a future time or a relative delay like 1h30m.` };
+  }
+  return { action: "schedule", delayMs, payload, atLabel: token };
 }
 
 export function formatRemaining(ms: number): string {
@@ -215,6 +241,11 @@ export default function (pi: ExtensionAPI) {
         return;
       }
 
+      if (plan.action === "error") {
+        ctx.ui.notify(plan.reason, "warning");
+        return;
+      }
+
       if (plan.action === "list") {
         ctx.ui.notify(formatLaterList(scheduler.list()), "info");
         return;
@@ -239,7 +270,11 @@ export default function (pi: ExtensionAPI) {
       }
       const task = scheduler.schedule(plan.delayMs, plan.payload);
       if (!ticker) ticker = setInterval(updateStatus, 1_000);
-      ctx.ui.notify(`Scheduled /later #${task.id} in ${formatRemaining(plan.delayMs)}: ${previewPayload(task.payload)}`, "info");
+      const remaining = formatRemaining(plan.delayMs);
+      const confirmation = plan.atLabel
+        ? `Scheduled /later #${task.id} at ${plan.atLabel} (in ${remaining}): ${previewPayload(task.payload)}`
+        : `Scheduled /later #${task.id} in ${remaining}: ${previewPayload(task.payload)}`;
+      ctx.ui.notify(confirmation, "info");
       updateStatus();
     },
   });
