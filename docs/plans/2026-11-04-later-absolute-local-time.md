@@ -50,11 +50,11 @@
 **Files:**
 - Modify: `tests/later.test.mjs`
 
-- [ ] С фиксированным `now` (локальная `new Date(2026, 10, 4, 12, 53, 34)`): `parseLaterArgs("15:01 привет", now)` → `{ action: "schedule", delayMs: target-now, payload: "привет", atLabel: "15:01" }`; то же через `at 15:01` и `в 15:01` (deepEqual, включая `atLabel`).
-- [ ] Ошибки: `"25:00 x"` и `"12:60 x"` → `error` с причиной про невалидное время; `now` = 13:00 и `"12:30 x"` → `error` «already passed today»; `"15:1 x"` и `"15:01:30 x"` не матчатся как `HH:MM` и падают в существующий `usage` с обновлённой причиной.
-- [ ] Относительное без изменений: `parseLaterArgs("2h7m привет", now)` → `delayMs: 7_620_000`, без `atLabel`; существующие тесты `parseLaterArgs`/`parseDelayMs` продолжают проходить.
-- [ ] E2E через `fakePi`: вычислить время из реальных часов как `new Date(Date.now() + 60_000)` и отформатировать в `HH:MM` (гарантированно будущее, без флаков на границе минуты) → `handler("<HH:MM> ping", ctx)` даёт notification, матчащий `/^Scheduled \/later #1 at \d{2}:\d{2} \(in/`, и task в `scheduler`.
-- [ ] E2E ветки `error`: `handler("12:60 x", ctx)` → warning с причиной, задач не запланировано, status-строка не появляется.
+- [x] С фиксированным `now` (локальная `new Date(2026, 10, 4, 12, 53, 34)`): `parseLaterArgs("15:01 привет", now)` → `{ action: "schedule", delayMs: target-now, payload: "привет", atLabel: "15:01" }`; то же через `at 15:01` и `в 15:01` (deepEqual, включая `atLabel`).
+- [x] Ошибки: `"25:00 x"` и `"12:60 x"` → `error` с причиной про невалидное время; `now` = 13:00 и `"12:30 x"` → `error` «already passed today»; `"15:1 x"` и `"15:01:30 x"` не матчатся как `HH:MM` и падают в существующий `usage` с обновлённой причиной.
+- [x] Относительное без изменений: `parseLaterArgs("2h7m привет", now)` → `delayMs: 7_620_000`, без `atLabel`; существующие тесты `parseLaterArgs`/`parseDelayMs` продолжают проходить.
+- [x] E2E через `fakePi`: вычислить время из реальных часов как `new Date(Date.now() + 60_000)` и отформатировать в `HH:MM` (гарантированно будущее, без флаков на границе минуты) → `handler("<HH:MM> ping", ctx)` даёт notification, матчащий `/^Scheduled \/later #1 at \d{2}:\d{2} \(in/`, и task в `scheduler`.
+- [x] E2E ветки `error`: `handler("12:60 x", ctx)` → warning с причиной, задач не запланировано, status-строка не появляется.
 
 ### Task 3: Документация
 

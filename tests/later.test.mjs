@@ -82,6 +82,47 @@ test("parseLaterArgs covers schedule, list, cancel, and usage branches", () => {
   assert.equal(later.parseLaterArgs("banana hello").action, "usage", "an invalid delay is usage");
 });
 
+test("parseLaterArgs accepts absolute local time HH:MM with at/в aliases", () => {
+  const now = new Date(2026, 10, 4, 12, 53, 34).getTime();
+  const target = new Date(2026, 10, 4, 15, 1, 0, 0).getTime();
+  const expected = { action: "schedule", delayMs: target - now, payload: "привет", atLabel: "15:01" };
+
+  assert.deepEqual(later.parseLaterArgs("15:01 привет", now), expected, "bare HH:MM form");
+  assert.deepEqual(later.parseLaterArgs("at 15:01 привет", now), expected, "at-prefixed form");
+  assert.deepEqual(later.parseLaterArgs("в 15:01 привет", now), expected, "в-prefixed form");
+});
+
+test("parseLaterArgs rejects invalid and past absolute times with error plans", () => {
+  assert.deepEqual(later.parseLaterArgs("25:00 x"), {
+    action: "error",
+    reason: '"25:00" is not a valid local time (HH:MM).',
+  });
+  assert.deepEqual(later.parseLaterArgs("12:60 x"), {
+    action: "error",
+    reason: '"12:60" is not a valid local time (HH:MM).',
+  });
+
+  const now = new Date(2026, 10, 4, 13, 0, 0).getTime();
+  assert.deepEqual(later.parseLaterArgs("12:30 x", now), {
+    action: "error",
+    reason: '"12:30" has already passed today. Use a future time or a relative delay like 1h30m.',
+  });
+
+  assert.equal(later.parseLaterArgs("15:1 x").action, "usage", "15:1 does not match HH:MM");
+  assert.match(later.parseLaterArgs("15:1 x").reason, /local time like 15:01/);
+  assert.equal(later.parseLaterArgs("15:01:30 x").action, "usage", "HH:MM:SS is out of scope");
+  assert.match(later.parseLaterArgs("15:01:30 x").reason, /local time like 15:01/);
+});
+
+test("parseLaterArgs keeps relative delays unchanged alongside absolute time", () => {
+  const now = new Date(2026, 10, 4, 12, 53, 34).getTime();
+  assert.deepEqual(later.parseLaterArgs("2h7m привет", now), {
+    action: "schedule",
+    delayMs: 7_620_000,
+    payload: "привет",
+  }, "relative delay stays relative and has no atLabel");
+});
+
 test("formatRemaining renders compact human-readable remaining time", () => {
   assert.equal(later.formatRemaining(0), "0s");
   assert.equal(later.formatRemaining(45_000), "45s");
@@ -193,4 +234,31 @@ test("later command supports list and cancel, and session changes cancel pending
   await shutdownHandler({}, pi.ctx);
   await handler("list", pi.ctx);
   assert.equal(pi.notifications.at(-1).message, "No pending /later tasks.", "shutdown clears the queue");
+});
+
+test("later command schedules an absolute HH:MM task and reports the at-label", async () => {
+  const pi = fakePi();
+  await later.default(pi.api);
+  const handler = pi.commands.get("later").handler;
+
+  const fire = new Date(Date.now() + 60_000);
+  const label = `${String(fire.getHours()).padStart(2, "0")}:${String(fire.getMinutes()).padStart(2, "0")}`;
+  await handler(`${label} ping`, pi.ctx);
+
+  assert.match(pi.notifications.at(-1).message, /^Scheduled \/later #1 at \d{2}:\d{2} \(in/);
+  assert.ok(pi.notifications.at(-1).message.includes(`at ${label}`), "confirmation echoes the requested local time");
+  assert.match(pi.statusSets.at(-1).text, /1 pending/, "task is queued in the scheduler");
+});
+
+test("later command reports an invalid absolute time as a warning without scheduling", async () => {
+  const pi = fakePi();
+  await later.default(pi.api);
+  const handler = pi.commands.get("later").handler;
+
+  await handler("12:60 x", pi.ctx);
+
+  assert.equal(pi.notifications.length, 1);
+  assert.equal(pi.notifications[0].type, "warning");
+  assert.match(pi.notifications[0].message, /not a valid local time/);
+  assert.equal(pi.statusSets.length, 0, "no status line appears for a rejected time");
 });
