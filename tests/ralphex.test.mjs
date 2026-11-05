@@ -806,10 +806,18 @@ test("task prompt enforces one task, validation, commit, and mode-specific ambig
   assert.match(interactive, /Immediately before each validation command/);
   assert.match(interactive, /"stage":"validation"/);
   assert.match(interactive, /<<<RALPHEX:QUESTION>>>/);
+  assert.match(interactive, /existing interface or prerequisite contradicts the plan/);
+  assert.match(interactive, /update this Task's Files\/actions/);
+  assert.match(interactive, /discovered mismatch and proposed correction/);
+  assert.match(interactive, /restart this same Task in a fresh worker/);
+  assert.match(interactive, /compilation\/analyze alone cannot prove runtime behavior/);
 
   const auto = prompts.taskPrompt({ planPath: "docs/plans/feature.md", task, auto: true });
   assert.match(auto, /unattended mode/);
   assert.match(auto, /## Execution Notes/);
+  assert.match(auto, /Amend this Task for safe, necessary dependencies/);
+  assert.match(auto, /Stop without committing if a safe decision requires/);
+  assert.match(auto, /<<<RALPHEX:TASK_BLOCKED>>>/);
   assert.match(auto, /<<<RALPHEX:SUMMARY>>>/);
   assert.doesNotMatch(auto, /<<<RALPHEX:QUESTION>>>/);
   assert.deepEqual(ralphex.parseTaskSummary(`<<<RALPHEX:SUMMARY>>>
@@ -821,14 +829,35 @@ test("task prompt enforces one task, validation, commit, and mode-specific ambig
   });
 });
 
+test("structural task blocker requires a concrete reason and correction", () => {
+  assert.deepEqual(ralphex.parseTaskBlocker(`<<<RALPHEX:TASK_BLOCKED>>>\n{"reason":"network API lacks cancellation","proposal":"add cancel token to upload API in Task 4"}\n<<<RALPHEX:END>>>`), {
+    reason: "network API lacks cancellation",
+    proposal: "add cancel token to upload API in Task 4",
+  });
+  assert.equal(ralphex.parseTaskBlocker(`<<<RALPHEX:TASK_BLOCKED>>>\n{"reason":"missing"}\n<<<RALPHEX:END>>>`), undefined);
+  assert.equal(ralphex.parseTaskBlocker("<<<RALPHEX:TASK_FAILED>>>"), undefined);
+});
+
 test("autonomous planning prompt forbids questions and implementation mutations", () => {
   const prompt = prompts.autonomousPlanPrompt("add separators");
   assert.match(prompt, /Do not ask the user questions/);
   assert.match(prompt, /Do not modify files, Git state/);
   assert.match(prompt, /Decision: <choice>; Alternatives:/);
   assert.match(prompt, /<<<RALPHEX:PLAN>>>/);
-  assert.match(prompt, /split large cross-screen conversions/);
+  assert.match(prompt, /Trace the existing interfaces and call paths/);
+  assert.match(prompt, /existing contracts in its Files and actions/);
+  assert.match(prompt, /coherent, independently verifiable outcome/);
+  assert.match(prompt, /compilation alone/);
+  assert.doesNotMatch(prompt, /4–6 production files or 800 lines/);
   assert.match(prompt, /review, release, push/);
+});
+
+test("interactive Ralphex planning checks call paths, prerequisites and behavioral evidence", () => {
+  const prompt = planExtension.buildRalphexPlanPrompt("offline checklist sync");
+  assert.match(prompt, /verify signatures instead of assuming/);
+  assert.match(prompt, /necessary existing-contract and caller changes/);
+  assert.match(prompt, /rather than impose a fixed file, line, or checkbox limit/);
+  assert.match(prompt, /distinguish manual verification from automated validation/);
 });
 
 test("Claude review parser accepts strict JSON and rejects invalid output", () => {

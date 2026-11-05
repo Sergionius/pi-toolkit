@@ -85,7 +85,7 @@ Create an implementation plan for the request below. Work conversationally in th
 
 ## Workflow
 
-1. Ground yourself in the actual project before asking questions. Read project instructions and inspect relevant code, structure, dependencies, and existing conventions directly with the available read-only tools. Keep exploration targeted, but read as much as needed to understand the change. Do not launch subagents or delegate the investigation.
+1. Ground yourself in the actual project before asking questions. Read project instructions and inspect relevant code, structure, dependencies, and existing conventions directly with the available read-only tools. Trace existing interfaces and call paths needed by risky requirements; verify signatures instead of assuming they support the proposed behavior. Keep exploration targeted, but read as much as needed to understand the change. Do not launch subagents or delegate the investigation.
 2. Briefly summarize what you found: the current flow, likely affected files, constraints, and remaining ambiguity.
 3. Ask only questions that materially affect behavior, scope, compatibility, interfaces, or architecture and cannot be answered from the repository. Ask exactly one question at a time. Do not ask about a testing preference.
 4. If there is a meaningful implementation choice, present 2–3 approaches with concrete trade-offs, lead with a recommendation, and ask the user to choose. Skip this when there is one obvious path.
@@ -129,17 +129,17 @@ Include only when useful to prevent ambiguity.
 - [ ] concrete, automatable implementation action
 - [ ] another action belonging to the same logical unit
 
-Continue with ordered Task sections. Put executable checkboxes only inside Task sections. Tasks should be specific, reasonably sized, dependency-ordered, and sufficient for another coding agent to implement without making product or architecture decisions. Every Task must leave the project in a state that passes the plan's applicable Validation; combine interdependent changes into one Task when an intermediate split would knowingly break compilation or analysis.
+Continue with ordered Task sections. Put executable checkboxes only inside Task sections. Tasks should describe coherent, independently verifiable outcomes rather than impose a fixed file, line, or checkbox limit. Split unrelated subflows, but keep tightly coupled changes together. For each Task, list necessary existing-contract and caller changes in Files/actions (or in a preceding Task), with dependencies ordered so another agent need not discover missing prerequisites mid-execution. Every Task must leave the project in a state that passes the plan's applicable Validation; combine interdependent changes into one Task when an intermediate split would knowingly break compilation or analysis.
 
 ## Validation
-Include the project's existing cheapest relevant non-destructive compile, analyze, typecheck, lint, or build commands when they can be discovered. Do not invent a test framework, mandatory tests, coverage targets, or testing tasks for a project that does not already use them. Tests belong here only when the project already relies on them for this area or the user explicitly requested them.
+Include the project's existing cheapest relevant non-destructive compile, analyze, typecheck, lint, or build commands when they can be discovered. For behavior not established by compilation (such as offline retries), name concrete observable acceptance scenarios and any existing automated checks; distinguish manual verification from automated validation. Do not invent a test framework, mandatory tests, coverage targets, or testing tasks for a project that does not already use them. Tests belong here only when the project already relies on them for this area or the user explicitly requested them.
 
 ## Acceptance Criteria
 A short, observable list of conditions proving the requested behavior is complete. Do not use checkboxes here.
 
 ## Planning constraints
 
-- Prefer the simplest implementation that fits existing project conventions; avoid speculative abstractions and future-proofing.
+- Prefer the simplest implementation that fits existing project conventions; avoid speculative abstractions and future-proofing. Before drafting, cross-check critical requirements against discovered interfaces, task prerequisites, and validation; do not claim compilation proves runtime behavior.
 - Use exact file paths when they can be discovered. Clearly identify any path that can only be resolved during implementation.
 - Do not add plan review, code review, deployment, release, commit, branch, worktree, rebase, squash, push, or merge steps.
 - Do not propose implementing anything after the plan is created.

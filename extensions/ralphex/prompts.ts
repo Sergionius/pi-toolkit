@@ -10,7 +10,7 @@ ${request.trim()}
 
 ## Workflow
 
-1. Read all applicable project guidance and inspect the relevant repository files and existing conventions. Do not launch subagents.
+1. Read all applicable project guidance and inspect the relevant repository files and existing conventions. Trace the existing interfaces and call paths required by the risky parts of the request (for example, cancellation, persistence, authentication, or retries); do not assume an API supports an option without checking its signature and callers. Keep exploration targeted. Do not launch subagents.
 2. Do not modify files, Git state, dependencies, services, or external systems. Your only output is the plan envelope below.
 3. Do not ask the user questions. Resolve ordinary engineering ambiguity using the safest, smallest, reversible choice consistent with repository precedent.
 4. If a safe plan requires credentials, destructive action, scope expansion, resolving contradictory requirements, or inventing incompatible public behavior without precedent, output only:
@@ -19,7 +19,7 @@ ${request.trim()}
 <<<RALPHEX:END>>>
 5. Record every material autonomous choice under ## Execution Notes. Use one bullet per choice in this form:
 - Decision: <choice>; Alternatives: <alternatives>; Reason: <reason>; Side effects: <effects or none>
-6. Use exact discovered paths. Do not invent tests or infrastructure. Include existing relevant validation commands when discoverable.
+6. Use exact discovered paths. For each Task, include prerequisite changes to existing contracts in its Files and actions, or put them in an earlier Task; do not defer a necessary cross-layer dependency to the worker. Do not invent tests or infrastructure. Include existing relevant validation commands and, when behavior cannot be established by compilation alone, concrete observable acceptance scenarios and available automated checks. State what needs manual verification instead of presenting a build as proof of runtime behavior.
 
 ${PLAN_NAMING_INSTRUCTIONS}
 
@@ -40,7 +40,7 @@ ${PLAN_NAMING_INSTRUCTIONS}
 ## Acceptance Criteria
 ## Execution Notes
 
-Task numbers must be sequential, every Task must contain at least one unchecked checkbox, and executable checkboxes must appear only in Task sections. Keep each Task small enough to implement, validate, and commit in one worker context: split large cross-screen conversions by feature/subflow (roughly 4–6 production files or 800 lines per Task), with relevant tests alongside each slice. Do not group all remaining screens into one Task. The plan must be implementable without further product or architecture choices. Do not include review, release, push, branch, worktree, or deployment steps.
+Task numbers must be sequential, every Task must contain at least one unchecked checkbox, and executable checkboxes must appear only in Task sections. Group work by a coherent, independently verifiable outcome, not a fixed file, line, or checkbox limit. Split unrelated subflows or tasks that cannot leave the project in a valid state, but keep tightly coupled contract and caller changes together. Do not group all remaining screens into one Task. Before returning the plan, check that each Task's declared files cover the prerequisites you found, dependencies are ordered, and its validation can establish what it actually claims. The plan must be implementable without further product or architecture choices. Do not include review, release, push, branch, worktree, or deployment steps.
 
 Return only:
 <<<RALPHEX:PLAN>>>
@@ -64,13 +64,13 @@ Read the entire plan first, including Goal, Context, Scope, Validation, Acceptan
 
 ## Required workflow
 
-1. Inspect the relevant project files and conventions yourself. Do not launch subagents. On a retry, inspect git status and the diff first; preserve valid uncommitted work from the previous attempt instead of restarting or restoring it blindly. The previous attempt may have already changed code or the plan.
+1. Inspect the relevant project files, actual API signatures and call paths yourself. Compare the plan's Files and assumptions with the code before implementing. Do not launch subagents. On a retry, inspect git status and the diff first; preserve valid uncommitted work from the previous attempt instead of restarting or restoring it blindly. The previous attempt may have already changed code or the plan.
 2. Complete every unchecked item in Task ${options.task.number}. Immediately before starting each unchecked item, output this progress envelope as a separate assistant message, with its 1-based position among all checkboxes in this Task, the total checkbox count, and the checkbox text:
 <<<RALPHEX:PROGRESS>>>
 {"stage":"checkbox","index":1,"total":3,"text":"concise checkbox text"}
 <<<RALPHEX:END>>>
 Do not wait for the item to finish before emitting its progress envelope. Progress envelopes are informational and do not replace editing the plan after validation.
-3. Keep the task within the accepted Scope. Do not perform code review or unrelated cleanup.
+3. Keep the task within the accepted Scope. If an existing interface or prerequisite contradicts the plan, do not repeatedly try the impossible step or silently mark it done. For a small, necessary, reversible dependency within the accepted Scope, update this Task's Files/actions and record the discovery and reason under ## Execution Notes before implementing it; preserve all previously completed items. Keep the task's outcome coherent. For a change to product behavior, Scope, public contracts without precedent, or a dependency that cannot safely be resolved in this Task, follow the Questions and decisions section instead. Do not perform code review or unrelated cleanup.
 4. Format changed files using the project's existing formatter when applicable.
 5. Validate before committing. Immediately before each validation command or non-regression check, output this progress envelope as a separate assistant message:
 <<<RALPHEX:PROGRESS>>>
@@ -80,7 +80,7 @@ Then:
    - Run the commands explicitly listed in the plan when applicable to this task.
    - For a documentation-only task, validate the document against the referenced source; do not run compile, typecheck, test, or build commands unless the plan explicitly requires them for that individual task.
    - Otherwise, if the plan has no usable validation command, identify and run the project's cheapest existing non-destructive compile, analyze, typecheck, or build command.
-   - Do not invent test infrastructure or run tests unless the plan explicitly asks for them.
+   - Do not invent test infrastructure or run tests unless the plan explicitly asks for them. If the plan names applicable behavioral checks, run them; compilation/analyze alone cannot prove runtime behavior. Record unavailable manual or integration scenarios as limitations, not verified results.
    - Fix and rerun failures introduced by this task. For compiler/analyzer errors caused by removing const from scaled widgets, also update their const call sites (including tests); resolve each diagnostic and rerun validation rather than stopping at the first failed command. Do not fix unrelated pre-existing failures.
    - If a validation command fails only because of pre-existing issues outside this task, establish that this task did not add or worsen them by comparing diagnostics with the base commit or otherwise inspecting the affected paths. Record the command and concise non-regression evidence under ## Execution Notes, then treat that command as a non-regression pass.
    - If an applicable validation cannot run because the environment, SDK, credentials, or dependencies are unavailable, or you cannot distinguish its failure from a regression introduced by this task, do not commit and report failure.
@@ -90,11 +90,15 @@ Then:
 
 ## Questions and decisions
 
-${options.auto ? `This is unattended mode. Do not ask the user questions. Resolve ordinary engineering ambiguity from the plan, project guidance, and existing conventions. Choose the simplest reversible option that does not expand scope, and append every material autonomous decision with its reason under ## Execution Notes in the plan. Stop without committing if a safe decision requires credentials, destructive action, a new incompatible public behavior without precedent, scope expansion, or resolving contradictory requirements.` : `This is interactive mode. If a material ambiguity cannot be resolved from the plan or repository, do not guess and do not modify or commit anything further. Output exactly:
+${options.auto ? `This is unattended mode. Do not ask the user questions. Resolve ordinary engineering ambiguity and missing implementation dependencies from the plan, project guidance, and existing conventions. Amend this Task for safe, necessary dependencies within the accepted Scope and record the evidence and reason under ## Execution Notes; preserve already completed work and do not silently change requirements. Stop without committing if a safe decision requires credentials, destructive action, a new incompatible public behavior without precedent, scope expansion, or resolving contradictory requirements. For such a structural blocker, preserve existing changes and output only this machine-readable signal with concrete evidence and a proposed plan correction:
+<<<RALPHEX:TASK_BLOCKED>>>
+{"reason":"what in the existing code blocks this Task","proposal":"specific plan change needed"}
+<<<RALPHEX:END>>>
+Do not use this signal for a validation failure that you can reasonably fix within the accepted Scope.` : `This is interactive mode. If a material ambiguity or plan correction cannot be resolved safely within the accepted Scope from the plan or repository, do not guess and do not modify or commit anything further. Ask one concrete question that includes the discovered mismatch and proposed correction. Output exactly:
 <<<RALPHEX:QUESTION>>>
 {"question":"one concrete question"}
 <<<RALPHEX:END>>>
-Then stop. For ordinary implementation details already determined by project conventions, proceed without asking.`}
+Then stop. The orchestrator will record the answer and restart this same Task in a fresh worker; preserve existing changes. For small, necessary, reversible dependencies already determined by project conventions, amend this Task and proceed without asking.`}
 
 If the task succeeds, end with this concise machine-readable summary followed by the completion signal:
 <<<RALPHEX:SUMMARY>>>
@@ -102,7 +106,7 @@ If the task succeeds, end with this concise machine-readable summary followed by
 <<<RALPHEX:END>>>
 <<<RALPHEX:TASK_DONE>>>
 Use empty arrays when there are no side effects or limitations.
-If it cannot be completed after reasonable attempts to diagnose and repair the specific failure, do not commit and end with <<<RALPHEX:TASK_FAILED>>>. Do not abandon a task merely because the first validation run reports errors. Before failing, state the concrete blocker and what you tried in a separate assistant message (the final signal remains machine-readable).
+If it cannot be completed after reasonable attempts to diagnose and repair an ordinary failure, do not commit and end with <<<RALPHEX:TASK_FAILED>>>. Use TASK_BLOCKED instead only for the structural blockers described above in unattended mode; the orchestrator stops without a futile retry. Do not abandon a task merely because the first validation run reports errors. Before failing, state the concrete blocker and what you tried in a separate assistant message (the final signal remains machine-readable).
 ${options.retryContext ? `\n## Previous attempt diagnostics\n${options.retryContext.slice(0, 8000)}` : ""}`;
 }
 

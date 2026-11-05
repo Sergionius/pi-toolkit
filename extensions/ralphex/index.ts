@@ -14,6 +14,7 @@ const CLAUDE_WRAPPER = join(PACKAGE_ROOT, "skills", "ask-claude", "scripts", "as
 const QUESTION_PATTERN = /<<<RALPHEX:QUESTION>>>\s*\n?([\s\S]*?)\n?<<<RALPHEX:END>>>/;
 const PROGRESS_PATTERN = /<<<RALPHEX:PROGRESS>>>\s*\n?([\s\S]*?)\n?<<<RALPHEX:END>>>/g;
 const SUMMARY_PATTERN = /<<<RALPHEX:SUMMARY>>>\s*\n?([\s\S]*?)\n?<<<RALPHEX:END>>>/;
+const TASK_BLOCKED_PATTERN = /<<<RALPHEX:TASK_BLOCKED>>>\s*\n?([\s\S]*?)\n?<<<RALPHEX:END>>>/;
 import { explicitPlanSlug, planSlug } from "./naming";
 
 const GENERATED_PLAN_PATTERN = /<<<RALPHEX:PLAN>>>\s*\n?([\s\S]*?)\n?<<<RALPHEX:END>>>/;
@@ -466,6 +467,19 @@ function parseQuestion(text: string): string | undefined {
   }
 }
 
+export function parseTaskBlocker(text: string): { reason: string; proposal: string } | undefined {
+  const payload = text.match(TASK_BLOCKED_PATTERN)?.[1]?.trim();
+  if (!payload) return undefined;
+  try {
+    const parsed = JSON.parse(payload);
+    if (typeof parsed.reason !== "string" || !parsed.reason.trim()
+      || typeof parsed.proposal !== "string" || !parsed.proposal.trim()) return undefined;
+    return { reason: parsed.reason.trim(), proposal: parsed.proposal.trim() };
+  } catch {
+    return undefined;
+  }
+}
+
 function parseTaskProgress(text: string): TaskProgress | undefined {
   let latest: TaskProgress | undefined;
   for (const match of text.matchAll(PROGRESS_PATTERN)) {
@@ -636,6 +650,12 @@ async function executePlan(
         await writePlan(resolved.path, appendExecutionNote(latest, `Task ${task.number}: ${question} — ${answer.trim()}`));
         retryContext = `User clarification: ${question}\nAnswer: ${answer.trim()}`;
         continue;
+      }
+
+      const blocker = result.code === 0 && !result.workerError && resolved.auto
+        ? parseTaskBlocker(result.assistantText) : undefined;
+      if (blocker) {
+        throw new Error(`Task ${task.number} blocked by a plan dependency (no automatic retry).\nReason: ${blocker.reason}\nProposed plan correction: ${blocker.proposal}\nUncommitted changes are preserved.\n${result.logPath ? `Diagnostic log: ${result.logPath}` : ""}`.trim());
       }
 
       const updated = await readPlan(resolved.path);
