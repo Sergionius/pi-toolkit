@@ -67,6 +67,7 @@ test("selection example names real entry points exposed by the package manifest"
     "extensions/plan/index.ts",
     "extensions/ralphex/index.ts",
     "extensions/toolkit.ts",
+    "extensions/zai-status.ts",
   ]);
   assert.ok(selected.every((path) => all.includes(path)));
 });

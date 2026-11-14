@@ -14,6 +14,7 @@
 - `figma-context.ts` — `figma_get_screen_context` tool. Caches exports in the private toolkit directory (`~/.pi/agent/cache/figma/`, or `PI_CODING_AGENT_DIR`), never in the working repository; the last good generation stays readable if a refresh fails.
 - `later.ts` — `/later <delay|HH:MM> <command or message>` schedules loaded extension/skill/prompt commands or plain messages (`/later 30m /ralphex-exec plan.md`, `/later at 15:01 check the build`). Relative delays use `h`/`m`/`s`, up to 24h; absolute local time is given as `HH:MM` (optionally prefixed with `at` or a localized alias) and schedules for today — a time that has already passed today is rejected instead of rolling over to tomorrow. Waits for the agent to be idle; overdue tasks remain cancellable with `/later cancel <id|all>` and visible in `/later list`. `/compact [instructions]` is supported explicitly; other built-in and unknown commands are rejected, while payloads starting with a file path (an inner `/` in the first token) are sent as plain text. Countdown updates every second. In-memory only: switching/forking sessions, shutdown, or `/reload` clears tasks.
 - `toolkit.ts` — toolkit integration diagnostics.
+- `zai-status.ts` — `/zai-usage` command: shows Z.ai (GLM) Coding Plan quota — the 5-hour and weekly windows with their reset times — using the Z.ai API key from the Pi `auth.json`. Talks to the undocumented Z.ai monitor endpoint; compact scope only, no per-model statistics.
 
 ### Prompt templates
 
@@ -57,6 +58,7 @@ The example loads only `/commit`, `/later`, and the `backlog_choice` tool. Add e
 | Figma | `+extensions/figma-context.ts` |
 | Codex accounts | `+extensions/codex-accounts.ts` |
 | Codex usage | `+extensions/codex-status.ts` |
+| Z.ai usage | `+extensions/zai-status.ts` (requires a Z.ai API key in `~/.pi/agent/auth.json`) |
 | Orca Ralphex status | `+extensions/orca-ralphex-status.ts` (use with Plan Mode/Ralphex) |
 | Toolkit doctor | `+extensions/toolkit.ts` |
 
