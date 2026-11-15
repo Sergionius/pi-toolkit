@@ -21,6 +21,7 @@ const extensionFiles = [
   "extensions/figma-context.ts",
   "extensions/later.ts",
   "extensions/orca-ralphex-status.ts",
+  "extensions/pi-fleet.ts",
   "extensions/plan/index.ts",
   "extensions/ralphex/index.ts",
   "extensions/toolkit.ts",
