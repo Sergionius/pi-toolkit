@@ -16,9 +16,11 @@ test('timeout stays a failure even if TERM handler exits zero',async()=>{
 test('timeout kills detached descendants after early leader exit and inherited pipes', {skip:process.platform==='win32'}, async()=>{
  for(const inherited of [false,true]) {
   const source=`const {spawn}=require('node:child_process');const c=spawn(process.execPath,['-e',"process.on('SIGTERM',()=>{});setInterval(()=>{},1000)"],{detached:true,stdio:${inherited ? "['ignore',1,2]" : "'ignore'"}});console.log(c.pid);process.on('SIGTERM',()=>process.exit(0));setInterval(()=>{},1000);`;
-  const result=await runCommand({...opts,args:['-e',source]});
+  // Two nested node startups must fit before the kill; 600ms is too tight under parallel test load
+  // (leader gets killed before console.log flushes -> empty stdout -> NaN pid).
+  const result=await runCommand({...opts,timeoutMs:2000,args:['-e',source]});
   const pid=Number(result.stdout.trim());
-  try{assert.ok(pid);assert.equal(result.code,124);await waitDead(pid);}finally{try{process.kill(pid,'SIGKILL')}catch{}}
+  try{assert.ok(pid,`leader did not print descendant pid in time; stdout=${JSON.stringify(result.stdout)} stderr=${JSON.stringify(result.stderr.slice(-200))}`);assert.equal(result.code,124);await waitDead(pid);}finally{try{process.kill(pid,'SIGKILL')}catch{}}
  }
 });
 test('normal exit and spawn errors settle without timeout side effects',async()=>{
