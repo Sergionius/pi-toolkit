@@ -19,7 +19,9 @@
 ### Prompt templates
 
 - `/auto <task>` — execute a task autonomously without questions and report every material decision made without user approval.
-- `/duo <task>` — Pi implements and Claude reviews through Orca; `/duo parallel <task>` compares independent read-only analyses; `/duo discuss <task>` adds a bounded argument exchange.
+- `/duo <task>` — Pi implements and Claude reviews through Orca.
+- `/parallel <task>` — Pi and Claude independently investigate without editing files.
+- `/discuss <task>` — independent read-only investigation followed by a bounded argument exchange.
 
 ### Skills
 
@@ -64,7 +66,7 @@ The example loads only `/commit`, `/later`, and the `backlog_choice` tool. Add e
 
 For example, add both Plan Mode and Ralphex paths to get `/plan`, `/ralphex-plan`, `/ralphex-exec`, and the other planning commands. `pi config` provides an interactive alternative for enabling individual resources. Run `/reload` after changing settings and check that only the chosen commands are available.
 
-This filters **what Pi loads**, not what `pi install` downloads: the whole repository and its dependencies are still installed and updated together. Skills (`ask-claude`, `backlog`, `figma-to-css`) and prompts (`auto`, `duo`) remain loaded unless filtered separately with the package entry's `skills` and `prompts` fields. For example, `"skills": []` and `"prompts": []` disable all toolkit skills and prompts. Ralphex review needs the `ask-claude` skill; `/duo` needs Orca and its skills. Filtering does not change other packages or globally installed skills.
+This filters **what Pi loads**, not what `pi install` downloads: the whole repository and its dependencies are still installed and updated together. Skills (`ask-claude`, `backlog`, `figma-to-css`) and prompts (`auto`, `duo`, `parallel`, `discuss`) remain loaded unless filtered separately with the package entry's `skills` and `prompts` fields. For example, `"skills": []` and `"prompts": []` disable all toolkit skills and prompts. Ralphex review needs the `ask-claude` skill; `/duo`, `/parallel`, and `/discuss` need Orca and its skills. Filtering does not change other packages or globally installed skills.
 
 Flutter auto-refresh is available as a separate Pi package: [Flutter Agent Refresh](https://github.com/Sergionius/flutter-agent-refresh).
 
@@ -119,15 +121,33 @@ Invoking `/auto` without a task makes no changes and reports the missing task in
 
 ## Pi + Claude via Orca
 
-Use the installed package's `/duo` prompt in any Pi project with Orca and a configured Claude agent:
+Use these prompts in any Pi project with Orca and a configured Claude agent:
+
+### `/duo` — implement and review
 
 ```text
 /duo fix the login error
-/duo parallel investigate ways to speed up list loading
-/duo discuss investigate ways to speed up list loading
 ```
 
-In the default mode, the current Pi session implements and tests the task, then delegates read-only code review to Claude through Orca orchestration. Pi assesses and fixes verified findings and reruns relevant checks. In `parallel` mode, Pi and Claude independently investigate without editing files; Pi compares their evidence and proposes a solution without implementing it. In `discuss` mode, the same independent investigation is followed by up to two read-only rounds of exchanging arguments through Orca; Pi reports the conclusion and any unresolved disagreement without implementing it. The prompt loads Orca's existing `orchestration` skill and version-matched CLI guide rather than maintaining its own command reference. Missing Orca or Claude is reported as a blocker, not silently replaced with another integration. Run `/reload` after updating the package to discover the command.
+Pi implements and tests the task, then delegates read-only code review of its changes to Claude through Orca. Pi assesses the findings, fixes verified problems, and reruns relevant checks. Claude never edits files.
+
+### `/parallel` — independent analysis
+
+```text
+/parallel investigate ways to speed up list loading
+```
+
+Pi and Claude investigate the same question independently, without sharing Pi's conclusions beforehand. Both remain read-only; Pi compares the evidence and proposes a solution without implementing it.
+
+### `/discuss` — analysis and argument exchange
+
+```text
+/discuss investigate ways to speed up list loading
+```
+
+Pi and Claude first investigate independently as in `/parallel`, then exchange arguments through Orca for up to two read-only rounds. Pi reports the conclusion and any unresolved disagreement without implementing it.
+
+All three prompts require a task; an empty invocation starts nothing. They load Orca's `orchestration` skill and version-matched CLI guide rather than maintaining their own command reference. Missing Orca or Claude is reported as a blocker, not silently replaced with another integration. Run `/reload` after updating the package to discover the commands.
 
 ## Ralphex plan
 

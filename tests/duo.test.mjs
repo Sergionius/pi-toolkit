@@ -4,42 +4,59 @@ import { resolve } from "node:path";
 import test from "node:test";
 
 const root = resolve(import.meta.dirname, "..");
+const prompt = (name) => readFile(resolve(root, `prompts/${name}.md`), "utf8");
 
-test("duo is bundled as a prompt and delegates Orca coordination to its existing skill", async () => {
+test("duo, parallel and discuss are separately bundled prompts", async () => {
   const manifest = JSON.parse(await readFile(resolve(root, "package.json"), "utf8"));
-  const prompt = await readFile(resolve(root, "prompts/duo.md"), "utf8");
-
   assert.deepEqual(manifest.pi.prompts, ["./prompts"]);
-  assert.match(prompt, /^---\ndescription: .+\nargument-hint: "\[parallel\|discuss\] <задача>"\n---/);
-  assert.match(prompt, /\$ARGUMENTS/);
-  assert.match(prompt, /Если задача отсутствует/);
-  assert.match(prompt, /skill `orchestration`/);
-  assert.match(prompt, /актуальное руководство из CLI Orca/);
-  assert.match(prompt, /Если Orca или Claude недоступны, сообщи о блокировке/);
+
+  for (const name of ["duo", "parallel", "discuss"]) {
+    const text = await prompt(name);
+    assert.match(text, /^---\ndescription: .+\nargument-hint: "<задача>"\n---/);
+    assert.match(text, /\$ARGUMENTS/);
+    assert.match(text, /Если задача отсутствует/);
+    assert.match(text, /ничего не запускай/);
+    assert.match(text, /skill `orchestration`/);
+    assert.match(text, /актуальное руководство из CLI Orca/);
+    assert.match(text, /Если Orca или Claude недоступны, сообщи о блокировке/);
+  }
 });
 
-test("duo modes separate writable implementation from read-only parallel research", async () => {
-  const prompt = await readFile(resolve(root, "prompts/duo.md"), "utf8");
-  assert.match(prompt, /Pi реализует → Claude проверяет → Pi исправляет/);
-  assert.match(prompt, /Claude не должен редактировать файлы/);
-  assert.match(prompt, /После получения результата Pi оценивает замечания/);
-  assert.match(prompt, /Режим `parallel` — независимый анализ без редактирования/);
-  assert.match(prompt, /не передавай ему вывод Pi до завершения его анализа/);
-  assert.match(prompt, /Никаких правок кода, планов или других файлов/);
-  assert.match(prompt, /Не реализуй его без отдельного запроса/);
+test("duo implements with read-only Claude review, without mode routing", async () => {
+  const text = await prompt("duo");
+  assert.match(text, /Pi реализует → Claude проверяет → Pi исправляет/);
+  assert.match(text, /Claude не должен редактировать файлы/);
+  assert.match(text, /После получения результата Pi оценивает замечания/);
+  assert.match(text, /только `parallel` либо `discuss`, ничего не запускай/);
+  assert.match(text, /Весь остальной текст — задача для реализации с ревью/);
+  assert.doesNotMatch(text, /Первое слово `parallel`|Режим `parallel`|Режим `discuss`/);
 });
 
-test("duo discuss exchanges arguments after independent research without editing files", async () => {
-  const prompt = await readFile(resolve(root, "prompts/duo.md"), "utf8");
+test("parallel keeps both analyses independent and read-only", async () => {
+  const text = await prompt("parallel");
+  assert.match(text, /не передавай ему вывод Pi до завершения его анализа/);
+  assert.match(text, /Пока Claude работает, Pi независимо исследует/);
+  assert.match(text, /Никаких правок кода, планов или других файлов, коммитов, релизов и пушей/);
+  assert.match(text, /Не реализуй его без отдельного запроса/);
+  assert.doesNotMatch(text, /Pi реализует → Claude проверяет/);
+});
+
+test("discuss exchanges arguments after independent research without editing files", async () => {
+  const text = await prompt("discuss");
+  assert.match(text, /не передавай ему вывод Pi до завершения его анализа/);
+  assert.match(text, /Дождись завершения независимого анализа обоих/);
+  assert.match(text, /не более одного дополнительного раунда обмена/);
+  assert.match(text, /follow-up к завершённому воркеру или создания новой задачи/);
+  assert.match(text, /неразрешённые расхождения/);
+  assert.match(text, /Никаких правок кода, планов или других файлов, коммитов, релизов и пушей/);
+  assert.doesNotMatch(text, /Pi реализует → Claude проверяет/);
+});
+
+test("README documents each command separately and no longer recommends duo submodes", async () => {
   const readme = await readFile(resolve(root, "README.md"), "utf8");
-  assert.match(prompt, /`discuss` — режим обсуждения/);
-  assert.match(prompt, /Режим `discuss` — независимый анализ, затем обмен аргументами через Orca без редактирования/);
-  assert.match(prompt, /не передавая Claude свои выводы заранее/);
-  assert.match(prompt, /не более одного дополнительного раунда обмена/);
-  assert.match(prompt, /создай новый Task\/Dispatch/);
-  assert.match(prompt, /не отправляй сообщение завершённому воркеру/);
-  assert.match(prompt, /неразрешённые расхождения/);
-  assert.match(prompt, /Никаких правок кода, планов или других файлов/);
-  assert.match(readme, /\/duo discuss investigate ways to speed up list loading/);
-  assert.match(readme, /up to two read-only rounds of exchanging arguments through Orca/);
+  for (const name of ["duo", "parallel", "discuss"]) {
+    assert.ok(readme.includes(`### \`/${name}\``));
+    assert.match(readme, new RegExp(`/${name} (?:fix|investigate)`));
+  }
+  assert.doesNotMatch(readme, /\/duo (?:parallel|discuss) /);
 });
