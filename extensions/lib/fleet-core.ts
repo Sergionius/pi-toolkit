@@ -606,7 +606,7 @@ export async function ensureFleetIgnored(cwd: string): Promise<boolean> {
     } catch {
       // no exclude file yet — create with a header
     }
-    if (current.split("\n").includes(".pi/fleet/")) return false;
+    if (current.split("\n").some((line) => line.trim() === ".pi/fleet/")) return true; // already ensured — not a failure
     const header = current === "" ? "# Managed by pi-fleet (local only)\n" : "";
     await appendFile(excludeFile, `${header}.pi/fleet/\n`);
     return true;

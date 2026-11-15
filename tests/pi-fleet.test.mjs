@@ -705,8 +705,8 @@ test("ensureFleetIgnored resolves linked worktrees (.git is a file, P1-1)", asyn
     assert.equal(ok, true);
     const exclude = await readFile(join(gitdir, "info", "exclude"), "utf8");
     assert.match(exclude, /^\.pi\/fleet\/$/m);
-    // second call is a no-op, not a duplicate line
-    await core.ensureFleetIgnored(tmp);
+    // second call is a success (already ensured), not a failure and not a duplicate line
+    assert.equal(await core.ensureFleetIgnored(tmp), true);
     const again = await readFile(join(gitdir, "info", "exclude"), "utf8");
     assert.equal(again.split("\n").filter((l) => l === ".pi/fleet/").length, 1);
   } finally {
@@ -718,6 +718,20 @@ test("ensureFleetIgnored returns false outside a repo without throwing", async (
   const tmp = await makeTmp();
   try {
     assert.equal(await core.ensureFleetIgnored(tmp), false);
+  } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test("ensureFleetIgnored reports success when the entry already exists", async () => {
+  const tmp = await makeTmp();
+  try {
+    await mkdir(join(tmp, ".git", "info"), { recursive: true });
+    await writeFile(join(tmp, ".git", "info", "exclude"), "# existing\n.pi/fleet/\n");
+    assert.equal(await core.ensureFleetIgnored(tmp), true);
+    const exclude = await readFile(join(tmp, ".git", "info", "exclude"), "utf8");
+    assert.equal(exclude.split("\n").filter((l) => l.trim() === ".pi/fleet/").length, 1, "no duplicate appended");
+    assert.match(exclude, /# existing/);
   } finally {
     await rm(tmp, { recursive: true, force: true });
   }
