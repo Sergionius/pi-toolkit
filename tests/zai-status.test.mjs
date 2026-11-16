@@ -10,7 +10,7 @@ const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const jiti = createJiti(import.meta.url);
 const zaiStatus = await jiti.import(resolve(root, "extensions/zai-status.ts"));
 
-const { parseQuota, formatQuota, formatReset, fetchQuota, readZaiKey } = zaiStatus;
+const { parseQuota, formatQuota, formatReset, fetchQuota, readZaiKey, readZaiCredential } = zaiStatus;
 
 const now = 1_700_000_000_000;
 const resetAt = now + 7_500_000; // 2 h 5 min ahead
@@ -102,6 +102,11 @@ test("readZaiKey reads auth.json from the agent dir without leaking the key", as
   try {
     await writeFile(join(dir, "auth.json"), JSON.stringify({ zai: { type: "api", key: " fake-key " } }));
     assert.equal(await readZaiKey(dir), "fake-key");
+    await writeFile(join(dir, "auth.json"), JSON.stringify({ "zai-coding-cn": { type: "api", key: " fake-cn-key " } }));
+    assert.equal(await readZaiKey(dir), "fake-cn-key");
+    assert.deepEqual(await readZaiCredential(dir), { key: "fake-cn-key", url: "https://open.bigmodel.cn/api/monitor/usage/quota/limit" });
+    await writeFile(join(dir, "auth.json"), JSON.stringify({ zai: { type: "api", key: " fake-key " }, "zai-coding-cn": { type: "api", key: "fake-cn-key" } }));
+    assert.deepEqual(await readZaiCredential(dir), { key: "fake-key", url: "https://api.z.ai/api/monitor/usage/quota/limit" });
     await writeFile(join(dir, "auth.json"), '{"zai":');
     await assert.rejects(readZaiKey(dir), /повреждён/);
     await writeFile(join(dir, "auth.json"), JSON.stringify({ openai: {} }));

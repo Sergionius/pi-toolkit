@@ -3,7 +3,11 @@ import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-const QUOTA_URL = "https://api.z.ai/api/monitor/usage/quota/limit";
+export const QUOTA_URLS: Record<string, string> = {
+  zai: "https://api.z.ai/api/monitor/usage/quota/limit",
+  "zai-coding-cn": "https://open.bigmodel.cn/api/monitor/usage/quota/limit",
+};
+const QUOTA_URL = QUOTA_URLS.zai;
 const REQUEST_TIMEOUT_MS = 15_000;
 
 // Undocumented Z.ai monitor API (used by community CLIs): unit 3 is the
@@ -39,7 +43,9 @@ export function agentDir(): string {
   return process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent");
 }
 
-export async function readZaiKey(dir: string = agentDir()): Promise<string> {
+export type ZaiCredential = { key: string; url: string };
+
+export async function readZaiCredential(dir: string = agentDir()): Promise<ZaiCredential> {
   let raw: string;
   try {
     raw = await readFile(join(dir, "auth.json"), "utf8");
@@ -52,9 +58,16 @@ export async function readZaiKey(dir: string = agentDir()): Promise<string> {
   } catch {
     throw new Error("auth.json повреждён: ожидается JSON");
   }
-  const key = (parsed as { zai?: { key?: unknown } })?.zai?.key;
-  if (typeof key !== "string" || !key.trim()) throw new Error("z.ai ключ не найден в auth.json (поле zai.key)");
-  return key.trim();
+  const auth = parsed as Record<string, { key?: unknown } | undefined>;
+  for (const [provider, url] of Object.entries(QUOTA_URLS)) {
+    const key = auth?.[provider]?.key;
+    if (typeof key === "string" && key.trim()) return { key: key.trim(), url };
+  }
+  throw new Error("z.ai ключ не найден в auth.json (поля zai.key / zai-coding-cn.key)");
+}
+
+export async function readZaiKey(dir: string = agentDir()): Promise<string> {
+  return (await readZaiCredential(dir)).key;
 }
 
 export function parseQuota(payload: unknown): Quota {
@@ -145,8 +158,8 @@ export default function (pi: ExtensionAPI) {
     description: "Show Z.ai GLM Coding Plan quota using the pi z.ai API key",
     handler: async (_args, ctx) => {
       try {
-        const key = await readZaiKey();
-        const quota = await fetchQuota(key);
+        const credential = await readZaiCredential();
+        const quota = await fetchQuota(credential.key, credential.url);
         ctx.ui.notify(formatQuota(quota), "info");
       } catch (error) {
         ctx.ui.notify(`zai-usage failed: ${error instanceof Error ? error.message : String(error)}`, "error");
