@@ -474,7 +474,7 @@ test("wiring: fleet tools — claim busy, release only own, team lists, send err
   }
 });
 
-test("wiring: fleet_claim is invisible by default and debug restores call/result without changing tool output", async () => {
+test("wiring: all fleet tools are invisible by default and debug restores call/result without changing tool output", async () => {
   const tmp = await makeTmp();
   const { pi, handlers, tools, commands } = mockPi();
   const notices = [];
@@ -482,21 +482,36 @@ test("wiring: fleet_claim is invisible by default and debug restores call/result
   try {
     loadFleet(pi);
     await startSession(pi, handlers, tmp);
-    const claimTool = tools.fleet_claim;
-    const args = { paths: ["mine.ts"] };
-    const result = await claimTool.execute("id", args, undefined, undefined, mockCtx(tmp));
-    assert.match(result.content[0].text, /CLAIMED mine\.ts/);
-    assert.deepEqual(claimTool.renderCall(args).render(80), []);
-    assert.deepEqual(claimTool.renderResult(result).render(80), []);
+    const calls = [
+      ["fleet_claim", { paths: ["mine.ts"] }],
+      ["fleet_release", { all: true }],
+      ["fleet_team", {}],
+      ["fleet_send", { to: "ghost", subject: "test", body: "test" }],
+    ];
+    const results = [];
+    for (const [name, args] of calls) {
+      const tool = tools[name];
+      const result = await tool.execute("id", args, undefined, undefined, mockCtx(tmp));
+      results.push(result);
+      assert.deepEqual(tool.renderCall(args).render(80), [], `${name} call hidden`);
+      assert.deepEqual(tool.renderResult(result).render(80), [], `${name} result hidden`);
+    }
+    assert.match(results[0].content[0].text, /CLAIMED mine\.ts/);
+    assert.match(results[1].content[0].text, /RELEASED/);
+    assert.match(results[3].content[0].text, /NOT DELIVERED/);
 
     await commands.fleet.handler("debug on", ctx);
-    assert.match(claimTool.renderCall(args).render(80).join("\n"), /fleet_claim.*mine\.ts/);
-    assert.match(claimTool.renderResult(result).render(80).join("\n"), /CLAIMED mine\.ts/);
+    for (const [index, [name, args]] of calls.entries()) {
+      assert.match(tools[name].renderCall(args).render(80).join("\n"), new RegExp(name));
+      assert.match(tools[name].renderResult(results[index]).render(80).join("\n"), /\S/);
+    }
     assert.match(notices.at(-1), /display is ON/);
 
     await commands.fleet.handler("debug off", ctx);
-    assert.deepEqual(claimTool.renderCall(args).render(80), []);
-    assert.deepEqual(claimTool.renderResult(result).render(80), []);
+    for (const [index, [name, args]] of calls.entries()) {
+      assert.deepEqual(tools[name].renderCall(args).render(80), []);
+      assert.deepEqual(tools[name].renderResult(results[index]).render(80), []);
+    }
     await commands.fleet.handler("debug nope", ctx);
     assert.match(notices.at(-1), /usage: \/fleet debug on\|off/);
     await stopSession(handlers, tmp);

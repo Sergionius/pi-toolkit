@@ -59,6 +59,13 @@ export default function (pi: ExtensionAPI) {
   let identity: FleetIdentity | null = null;
   let autoLock = true;
   let debug = false; // TUI only: model-visible tool results remain unchanged.
+  const fleetDisplay = (name: string) => ({
+    // Self-shell + empty components remove the entire row, including its spacer.
+    renderShell: "self" as const,
+    renderCall: (args: unknown) => debug ? new Text(`${name} ${JSON.stringify(args)}`, 0, 0) : new Container(),
+    renderResult: (result: { content: Array<{ type: string; text?: string }> }) =>
+      debug ? new Text(result.content.map((item) => item.type === "text" ? item.text : "").join("\n"), 0, 0) : new Container(),
+  });
   let watcher: fs.FSWatcher | null = null;
   let heartbeatTimer: NodeJS.Timeout | null = null;
   let sweepTimer: NodeJS.Timeout | null = null;
@@ -231,14 +238,7 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "fleet_claim",
     label: "fleet_claim",
-    // Self-shell + empty components remove the entire row, including its spacer.
-    renderShell: "self",
-    renderCall(args) {
-      return debug ? new Text(`fleet_claim ${JSON.stringify(args)}`, 0, 0) : new Container();
-    },
-    renderResult(result) {
-      return debug ? new Text(result.content.map((item) => item.type === "text" ? item.text : "").join("\n"), 0, 0) : new Container();
-    },
+    ...fleetDisplay("fleet_claim"),
     description:
       "Claim exclusive write ownership of files for this pi session. Claimed paths deny foreign edit/write attempts. Required before editing files another session might touch. Stale/orphaned locks are stolen loudly.",
     parameters: Type.Object({
@@ -281,6 +281,7 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "fleet_release",
     label: "fleet_release",
+    ...fleetDisplay("fleet_release"),
     description:
       "Release file claims owned by this session (never foreign locks). Use after finishing an area, or when a peer asks you to via a fleet message.",
     parameters: Type.Object({
@@ -305,6 +306,7 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "fleet_send",
     label: "fleet_send",
+    ...fleetDisplay("fleet_send"),
     description:
       'Send a message to another live pi session. Use to toss a bug to the session owning an area (to:"owner-of:<path>"), coordinate env/testing, or ask for a lock release. Delivery wakes an idle recipient within ~10s.',
     parameters: Type.Object({
@@ -330,6 +332,7 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "fleet_team",
     label: "fleet_team",
+    ...fleetDisplay("fleet_team"),
     description:
       "Show live pi sessions in this workspace and who holds which file locks. Run before claiming files or when a write is denied.",
     parameters: Type.Object({}),
@@ -415,7 +418,7 @@ export default function (pi: ExtensionAPI) {
       if (sub === "debug") {
         if (rest[0] !== "on" && rest[0] !== "off") return say("usage: /fleet debug on|off");
         debug = rest[0] === "on";
-        return say(`fleet_claim display is ${debug ? "ON" : "OFF"}`);
+        return say(`fleet tool display is ${debug ? "ON" : "OFF"}`);
       }
       say("usage: /fleet team | lock <paths> | release [all|paths] | msg <to> <text> | auto on|off | debug on|off");
     },
