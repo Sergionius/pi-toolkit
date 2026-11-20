@@ -474,6 +474,37 @@ test("wiring: fleet tools — claim busy, release only own, team lists, send err
   }
 });
 
+test("wiring: fleet_claim is invisible by default and debug restores call/result without changing tool output", async () => {
+  const tmp = await makeTmp();
+  const { pi, handlers, tools, commands } = mockPi();
+  const notices = [];
+  const ctx = mockCtx(tmp, { hasUI: true, ui: { notify: (message) => notices.push(message) } });
+  try {
+    loadFleet(pi);
+    await startSession(pi, handlers, tmp);
+    const claimTool = tools.fleet_claim;
+    const args = { paths: ["mine.ts"] };
+    const result = await claimTool.execute("id", args, undefined, undefined, mockCtx(tmp));
+    assert.match(result.content[0].text, /CLAIMED mine\.ts/);
+    assert.deepEqual(claimTool.renderCall(args).render(80), []);
+    assert.deepEqual(claimTool.renderResult(result).render(80), []);
+
+    await commands.fleet.handler("debug on", ctx);
+    assert.match(claimTool.renderCall(args).render(80).join("\n"), /fleet_claim.*mine\.ts/);
+    assert.match(claimTool.renderResult(result).render(80).join("\n"), /CLAIMED mine\.ts/);
+    assert.match(notices.at(-1), /display is ON/);
+
+    await commands.fleet.handler("debug off", ctx);
+    assert.deepEqual(claimTool.renderCall(args).render(80), []);
+    assert.deepEqual(claimTool.renderResult(result).render(80), []);
+    await commands.fleet.handler("debug nope", ctx);
+    assert.match(notices.at(-1), /usage: \/fleet debug on\|off/);
+    await stopSession(handlers, tmp);
+  } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
+
 test("wiring: bash gate never blocks, only warns via UI when present", async () => {
   const tmp = await makeTmp();
   const { pi, handlers, tools } = mockPi();

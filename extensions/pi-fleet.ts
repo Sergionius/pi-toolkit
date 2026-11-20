@@ -10,6 +10,7 @@
 // commands (human sugar). Bash stays warn-only by design.
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import { Container, Text } from "@earendil-works/pi-tui";
 import { mkdir, stat } from "node:fs/promises";
 import * as fs from "node:fs";
 import { join, resolve } from "node:path";
@@ -57,6 +58,7 @@ const askOwnerHint = (absPath: string) =>
 export default function (pi: ExtensionAPI) {
   let identity: FleetIdentity | null = null;
   let autoLock = true;
+  let debug = false; // TUI only: model-visible tool results remain unchanged.
   let watcher: fs.FSWatcher | null = null;
   let heartbeatTimer: NodeJS.Timeout | null = null;
   let sweepTimer: NodeJS.Timeout | null = null;
@@ -164,6 +166,7 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("session_start", async (_event, ctx) => {
     identity = null;
+    debug = false;
     const me = haveIdentity(ctx);
     const root = fleetRoot(ctx.cwd);
     await registerSession(root, me);
@@ -228,6 +231,14 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "fleet_claim",
     label: "fleet_claim",
+    // Self-shell + empty components remove the entire row, including its spacer.
+    renderShell: "self",
+    renderCall(args) {
+      return debug ? new Text(`fleet_claim ${JSON.stringify(args)}`, 0, 0) : new Container();
+    },
+    renderResult(result) {
+      return debug ? new Text(result.content.map((item) => item.type === "text" ? item.text : "").join("\n"), 0, 0) : new Container();
+    },
     description:
       "Claim exclusive write ownership of files for this pi session. Claimed paths deny foreign edit/write attempts. Required before editing files another session might touch. Stale/orphaned locks are stolen loudly.",
     parameters: Type.Object({
@@ -356,7 +367,7 @@ export default function (pi: ExtensionAPI) {
   // --- human sugar ---
 
   pi.registerCommand("fleet", {
-    description: "pi-fleet team coordination (team | lock <paths> | release [all|paths] | msg <to> <text> | auto on|off)",
+    description: "pi-fleet team coordination (team | lock <paths> | release [all|paths] | msg <to> <text> | auto on|off | debug on|off)",
     handler: async (args, ctx: ExtensionCommandContext) => {
       const me = haveIdentity(ctx);
       const root = fleetRoot(ctx.cwd);
@@ -401,7 +412,12 @@ export default function (pi: ExtensionAPI) {
         autoLock = rest[0] === "on";
         return say(`auto-lock on first write is ${autoLock ? "ON" : "OFF"}`);
       }
-      say("usage: /fleet team | lock <paths> | release [all|paths] | msg <to> <text> | auto on|off");
+      if (sub === "debug") {
+        if (rest[0] !== "on" && rest[0] !== "off") return say("usage: /fleet debug on|off");
+        debug = rest[0] === "on";
+        return say(`fleet_claim display is ${debug ? "ON" : "OFF"}`);
+      }
+      say("usage: /fleet team | lock <paths> | release [all|paths] | msg <to> <text> | auto on|off | debug on|off");
     },
   });
 
